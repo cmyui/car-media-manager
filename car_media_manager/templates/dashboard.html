@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Car Media Manager</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: system-ui, -apple-system, sans-serif; background: #0f1117; color: #e1e4e8; padding: 24px; }
+        h1 { font-size: 1.4rem; margin-bottom: 24px; color: #f0f0f0; }
+        h2 { font-size: 1.1rem; margin-bottom: 12px; color: #c9d1d9; }
+
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 32px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+        .card .label { font-size: 0.8rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; }
+        .card .value { font-size: 1.8rem; font-weight: 600; margin-top: 4px; }
+        .card .value.green { color: #3fb950; }
+        .card .value.yellow { color: #d29922; }
+        .card .value.blue { color: #58a6ff; }
+
+        .cameras { display: flex; gap: 12px; margin-bottom: 32px; flex-wrap: wrap; }
+        .camera-badge { display: flex; align-items: center; gap: 8px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 8px 14px; font-size: 0.85rem; }
+        .camera-badge .dot { width: 8px; height: 8px; border-radius: 50%; }
+        .camera-badge .dot.online { background: #3fb950; }
+        .camera-badge .dot.offline { background: #484f58; }
+
+        .actions { margin-bottom: 32px; }
+        .btn { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+        .btn:hover { background: #30363d; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn.primary { background: #238636; border-color: #2ea043; color: #fff; }
+        .btn.primary:hover { background: #2ea043; }
+
+        .status-msg { margin-left: 12px; font-size: 0.85rem; color: #8b949e; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        th { text-align: left; padding: 8px 12px; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 500; }
+        td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
+        tr:hover { background: #161b22; }
+        .uploaded { color: #3fb950; }
+        .pending { color: #d29922; }
+
+        .refresh-hint { font-size: 0.75rem; color: #484f58; margin-top: 8px; }
+    </style>
+</head>
+<body>
+    <h1>Car Media Manager</h1>
+
+    <div class="cameras">
+        <div class="camera-badge">
+            <span class="dot {{ 'online' if gopro_connected else 'offline' }}"></span>
+            GoPro Hero 13
+        </div>
+        <div class="camera-badge">
+            <span class="dot {{ 'online' if insta360_connected else 'offline' }}"></span>
+            Insta360 X4
+        </div>
+        <div class="camera-badge">
+            <span class="dot {{ 'online' if has_internet else 'offline' }}"></span>
+            Internet
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <div class="label">Total Files</div>
+            <div class="value blue">{{ stats.total_files }}</div>
+        </div>
+        <div class="card">
+            <div class="label">Pending Upload</div>
+            <div class="value yellow">{{ stats.pending_files }}</div>
+        </div>
+        <div class="card">
+            <div class="label">Uploaded</div>
+            <div class="value green">{{ stats.uploaded_files }}</div>
+        </div>
+        <div class="card">
+            <div class="label">Local Storage Used</div>
+            <div class="value blue">{{ total_size_display }}</div>
+        </div>
+        <div class="card">
+            <div class="label">Pending Upload Size</div>
+            <div class="value yellow">{{ pending_size_display }}</div>
+        </div>
+    </div>
+
+    <div class="actions">
+        <button class="btn primary" id="ingest-btn" onclick="triggerIngest()">Ingest Now</button>
+        <button class="btn" id="upload-btn" onclick="triggerUpload()">Upload Now</button>
+        <span class="status-msg" id="action-status"></span>
+    </div>
+
+    <h2>Recent Files</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Source</th>
+                <th>Filename</th>
+                <th>Size</th>
+                <th>Ingested</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for file in recent_files %}
+            <tr>
+                <td>{{ file.source }}</td>
+                <td>{{ file.original_filename }}</td>
+                <td>{{ file.file_size | format_size }}</td>
+                <td>{{ file.ingested_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td class="{{ 'uploaded' if file.uploaded_at else 'pending' }}">
+                    {{ 'Uploaded' if file.uploaded_at else 'Pending' }}
+                </td>
+            </tr>
+            {% endfor %}
+            {% if not recent_files %}
+            <tr><td colspan="5" style="color: #484f58; text-align: center; padding: 24px;">No files ingested yet</td></tr>
+            {% endif %}
+        </tbody>
+    </table>
+    <p class="refresh-hint">Auto-refreshes every 30 seconds</p>
+
+    <script>
+        setTimeout(() => location.reload(), 30000);
+
+        async function triggerIngest() {
+            const btn = document.getElementById('ingest-btn');
+            const status = document.getElementById('action-status');
+            btn.disabled = true;
+            status.textContent = 'Ingesting...';
+            try {
+                const res = await fetch('/api/ingest', { method: 'POST' });
+                const data = await res.json();
+                status.textContent = `Ingested ${data.ingested} files`;
+                setTimeout(() => location.reload(), 1000);
+            } catch (e) {
+                status.textContent = 'Error: ' + e.message;
+            }
+            btn.disabled = false;
+        }
+
+        async function triggerUpload() {
+            const btn = document.getElementById('upload-btn');
+            const status = document.getElementById('action-status');
+            btn.disabled = true;
+            status.textContent = 'Uploading...';
+            try {
+                const res = await fetch('/api/upload', { method: 'POST' });
+                const data = await res.json();
+                status.textContent = `Uploaded ${data.uploaded} files`;
+                setTimeout(() => location.reload(), 1000);
+            } catch (e) {
+                status.textContent = 'Error: ' + e.message;
+            }
+            btn.disabled = false;
+        }
+    </script>
+</body>
+</html>

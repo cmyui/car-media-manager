@@ -1,0 +1,88 @@
+import asyncio
+import logging
+
+import uvicorn
+
+from car_media_manager import ingest
+from car_media_manager import upload
+from car_media_manager.db import Database
+from car_media_manager.settings import Settings
+from car_media_manager.web import create_app
+
+log = logging.getLogger("car_media_manager")
+
+
+async def ingest_loop(*, settings: Settings, database: Database) -> None:
+    while True:
+        try:
+            ingested = ingest.run_ingest_cycle(
+                database=database,
+                storage_dir=settings.storage_dir,
+                gopro_volume_name=settings.gopro_volume_name,
+                insta360_volume_name=settings.insta360_volume_name,
+            )
+            if ingested:
+                log.info("Ingest cycle: %d new files", ingested)
+        except Exception:
+            log.exception("Ingest cycle failed")
+        await asyncio.sleep(settings.ingest_interval_seconds)
+
+
+async def upload_loop(*, settings: Settings, database: Database) -> None:
+    while True:
+        try:
+            uploaded = upload.run_upload_cycle(
+                database=database,
+                rclone_remote=settings.rclone_remote,
+            )
+            if uploaded:
+                log.info("Upload cycle: %d files uploaded", uploaded)
+        except Exception:
+            log.exception("Upload cycle failed")
+        await asyncio.sleep(settings.upload_interval_seconds)
+
+
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    settings = Settings(_env_file=".env")  # type: ignore[call-arg]
+    settings.storage_dir.mkdir(parents=True, exist_ok=True)
+    database = Database(settings.db_path)
+
+    app = create_app(settings=settings, database=database)
+
+    config = uvicorn.Config(
+        app,
+        host="0.0.0.0",
+        port=settings.web_port,
+        log_level="warning",
+    )
+    server = uvicorn.Server(config)
+
+    async def run() -> None:
+        ingest_task = asyncio.create_task(
+            ingest_loop(settings=settings, database=database),
+        )
+        upload_task = asyncio.create_task(
+            upload_loop(settings=settings, database=database),
+        )
+
+        await server.serve()
+
+        ingest_task.cancel()
+        upload_task.cancel()
+
+    log.info("Starting Car Media Manager on port %d", settings.web_port)
+    log.info("Storage: %s", settings.storage_dir.resolve())
+    log.info("Database: %s", settings.db_path.resolve())
+
+    asyncio.run(run())
+    database.close()
+
+
+if __name__ == "__main__":
+    main()
