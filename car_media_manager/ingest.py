@@ -1,11 +1,13 @@
 import logging
 import platform
+import re
 import shutil
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 
 from car_media_manager import db
+from car_media_manager import mtp
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +103,22 @@ def ingest_file(
     )
 
 
+def _find_or_mount_camera(
+    source: str,
+    volume_name: str,
+    usb_pattern: "re.Pattern[str]",
+) -> Path | None:
+    vol = find_camera_volume(volume_name)
+    if vol:
+        return vol
+
+    if mtp.detect_mtp_camera(usb_pattern):
+        log.info("%s detected via USB (MTP), mounting...", source)
+        return mtp.mount_mtp_device(source)
+
+    return None
+
+
 def run_ingest_cycle(
     *,
     database: db.Database,
@@ -109,20 +127,25 @@ def run_ingest_cycle(
     insta360_volume_name: str,
 ) -> int:
     ingested = 0
+    mtp_sources: list[str] = []
 
-    sources: list[tuple[str, str, list[Path]]] = []
+    sources: list[tuple[str, list[Path]]] = []
 
-    gopro_vol = find_camera_volume(gopro_volume_name)
+    gopro_vol = _find_or_mount_camera("gopro", gopro_volume_name, mtp.GOPRO_USB_PATTERN)
     if gopro_vol:
         log.info("GoPro detected at %s", gopro_vol)
-        sources.append(("gopro", gopro_volume_name, scan_gopro(gopro_vol)))
+        sources.append(("gopro", scan_gopro(gopro_vol)))
+        if gopro_vol.is_relative_to(mtp.MTP_MOUNT_ROOT):
+            mtp_sources.append("gopro")
 
-    insta360_vol = find_camera_volume(insta360_volume_name)
+    insta360_vol = _find_or_mount_camera("insta360", insta360_volume_name, mtp.INSTA360_USB_PATTERN)
     if insta360_vol:
         log.info("Insta360 detected at %s", insta360_vol)
-        sources.append(("insta360", insta360_volume_name, scan_insta360(insta360_vol)))
+        sources.append(("insta360", scan_insta360(insta360_vol)))
+        if insta360_vol.is_relative_to(mtp.MTP_MOUNT_ROOT):
+            mtp_sources.append("insta360")
 
-    for source, _vol_name, files in sources:
+    for source, files in sources:
         log.info("Found %d files from %s", len(files), source)
         for file_path in files:
             result = ingest_file(
@@ -133,6 +156,9 @@ def run_ingest_cycle(
             )
             if result:
                 ingested += 1
+
+    for source in mtp_sources:
+        mtp.unmount_mtp_device(source)
 
     if not sources:
         log.debug("No cameras detected")

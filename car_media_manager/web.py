@@ -5,6 +5,7 @@ import jinja2
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi.responses import HTMLResponse
+from mypy_boto3_s3 import S3Client
 
 from car_media_manager import db
 from car_media_manager import ingest
@@ -22,7 +23,12 @@ def format_size(num_bytes: int) -> str:
     return f"{num_bytes:.1f} PB"
 
 
-def create_app(*, settings: Settings, database: db.Database) -> FastAPI:
+def create_app(
+    *,
+    settings: Settings,
+    database: db.Database,
+    s3_client: S3Client,
+) -> FastAPI:
     app = FastAPI(title="Car Media Manager")
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(str(TEMPLATES_DIR)),
@@ -34,8 +40,12 @@ def create_app(*, settings: Settings, database: db.Database) -> FastAPI:
     async def dashboard(request: Request) -> HTMLResponse:
         stats = database.get_stats()
         recent_files = database.list_recent(limit=50)
-        gopro_connected = ingest.find_camera_volume(settings.gopro_volume_name) is not None
-        insta360_connected = ingest.find_camera_volume(settings.insta360_volume_name) is not None
+        gopro_connected = (
+            ingest.find_camera_volume(settings.gopro_volume_name) is not None
+        )
+        insta360_connected = (
+            ingest.find_camera_volume(settings.insta360_volume_name) is not None
+        )
         has_internet_now = await asyncio.to_thread(upload.has_internet)
 
         template = env.get_template("dashboard.html")
@@ -66,7 +76,9 @@ def create_app(*, settings: Settings, database: db.Database) -> FastAPI:
         uploaded = await asyncio.to_thread(
             upload.run_upload_cycle,
             database=database,
-            rclone_remote=settings.rclone_remote,
+            s3_client=s3_client,
+            bucket=settings.s3_bucket_name,
+            s3_prefix=settings.s3_prefix,
         )
         return {"uploaded": uploaded}
 

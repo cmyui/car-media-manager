@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 import uvicorn
+from mypy_boto3_s3 import S3Client
 
 from car_media_manager import ingest
 from car_media_manager import upload
@@ -28,12 +29,19 @@ async def ingest_loop(*, settings: Settings, database: Database) -> None:
         await asyncio.sleep(settings.ingest_interval_seconds)
 
 
-async def upload_loop(*, settings: Settings, database: Database) -> None:
+async def upload_loop(
+    *,
+    settings: Settings,
+    database: Database,
+    s3_client: S3Client,
+) -> None:
     while True:
         try:
             uploaded = upload.run_upload_cycle(
                 database=database,
-                rclone_remote=settings.rclone_remote,
+                s3_client=s3_client,
+                bucket=settings.s3_bucket_name,
+                s3_prefix=settings.s3_prefix,
             )
             if uploaded:
                 log.info("Upload cycle: %d files uploaded", uploaded)
@@ -52,8 +60,9 @@ def main() -> None:
     settings = Settings(_env_file=".env")  # type: ignore[call-arg]
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
     database = Database(settings.db_path)
+    s3_client = upload.create_s3_client(settings)
 
-    app = create_app(settings=settings, database=database)
+    app = create_app(settings=settings, database=database, s3_client=s3_client)
 
     config = uvicorn.Config(
         app,
@@ -68,7 +77,7 @@ def main() -> None:
             ingest_loop(settings=settings, database=database),
         )
         upload_task = asyncio.create_task(
-            upload_loop(settings=settings, database=database),
+            upload_loop(settings=settings, database=database, s3_client=s3_client),
         )
 
         await server.serve()
