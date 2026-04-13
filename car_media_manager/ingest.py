@@ -1,7 +1,7 @@
+import asyncio
 import logging
 import platform
 import shutil
-import threading
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -12,7 +12,7 @@ from car_media_manager import mtp
 
 log = logging.getLogger(__name__)
 
-_ingest_lock = threading.Lock()
+_ingest_lock = asyncio.Lock()
 
 
 def _default_volumes_root() -> Path:
@@ -41,21 +41,21 @@ def find_camera_mounts(volumes_root: Path | None = None) -> list[tuple[Path, cam
     return mounts
 
 
-def find_mtp_cameras() -> list[tuple[Path, cameras.Camera]]:
+async def find_mtp_cameras() -> list[tuple[Path, cameras.Camera]]:
     mounts: list[tuple[Path, cameras.Camera]] = []
     for camera in cameras.KNOWN_CAMERAS:
         if camera.usb_pattern is None:
             continue
-        if not mtp.detect_mtp_camera(camera.usb_pattern):
+        if not await mtp.detect_mtp_camera(camera.usb_pattern):
             continue
         log.info("%s detected via USB (MTP), mounting...", camera.display_name)
-        mount_path = mtp.mount_mtp_device(camera.source_name)
+        mount_path = await mtp.mount_mtp_device(camera.source_name)
         if mount_path:
             mounts.append((mount_path, camera))
     return mounts
 
 
-def ingest_file(
+async def ingest_file(
     *,
     database: db.Database,
     camera: cameras.Camera,
@@ -65,7 +65,7 @@ def ingest_file(
     file_size = file_path.stat().st_size
     original_filename = file_path.name
 
-    if database.is_ingested(
+    if await database.is_ingested(
         source=camera.source_name,
         original_filename=original_filename,
         file_size=file_size,
@@ -85,14 +85,14 @@ def ingest_file(
             counter += 1
 
     log.info("Ingesting %s -> %s (%d bytes)", file_path, dest_path, file_size)
-    shutil.copy2(file_path, dest_path)
+    await asyncio.to_thread(shutil.copy2, file_path, dest_path)
 
     created_at = datetime.fromtimestamp(
         file_path.stat().st_mtime,
         tz=timezone.utc,
     )
 
-    return database.insert_media_file(
+    return await database.insert_media_file(
         source=camera.source_name,
         original_filename=original_filename,
         local_path=str(dest_path),
@@ -101,21 +101,21 @@ def ingest_file(
     )
 
 
-def run_ingest_cycle(
+async def run_ingest_cycle(
     *,
     database: db.Database,
     storage_dir: Path,
     volumes_root: Path | None = None,
 ) -> int:
-    if not _ingest_lock.acquire(blocking=False):
+    if _ingest_lock.locked():
         log.debug("Ingest cycle already in progress, skipping")
         return 0
 
-    try:
+    async with _ingest_lock:
         ingested = 0
 
         fs_mounts = find_camera_mounts(volumes_root)
-        mtp_mounts = find_mtp_cameras()
+        mtp_mounts = await find_mtp_cameras()
         all_mounts = fs_mounts + mtp_mounts
 
         if not all_mounts:
@@ -135,7 +135,7 @@ def run_ingest_cycle(
             log.info("Found %d files from %s", len(files), camera.source_name)
 
             for file_path in files:
-                result = ingest_file(
+                result = await ingest_file(
                     database=database,
                     camera=camera,
                     file_path=file_path,
@@ -145,8 +145,6 @@ def run_ingest_cycle(
                     ingested += 1
 
         for mount_path, _camera in mtp_mounts:
-            mtp.unmount_mtp_device(mount_path.name)
+            await mtp.unmount_mtp_device(mount_path.name)
 
         return ingested
-    finally:
-        _ingest_lock.release()

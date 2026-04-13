@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 import uvicorn
-from mypy_boto3_s3 import S3Client
+from types_aiobotocore_s3 import S3Client
 
 from car_media_manager import ingest
 from car_media_manager import upload
@@ -16,8 +16,7 @@ log = logging.getLogger("car_media_manager")
 async def ingest_loop(*, settings: Settings, database: Database) -> None:
     while True:
         try:
-            ingested = await asyncio.to_thread(
-                ingest.run_ingest_cycle,
+            ingested = await ingest.run_ingest_cycle(
                 database=database,
                 storage_dir=settings.storage_dir,
                 volumes_root=settings.volumes_root,
@@ -37,8 +36,7 @@ async def upload_loop(
 ) -> None:
     while True:
         try:
-            uploaded = await asyncio.to_thread(
-                upload.run_upload_cycle,
+            uploaded = await upload.run_upload_cycle(
                 database=database,
                 s3_client=s3_client,
                 bucket=settings.s3_bucket_name,
@@ -51,29 +49,28 @@ async def upload_loop(
         await asyncio.sleep(settings.upload_interval_seconds)
 
 
-def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
-
+async def run() -> None:
     settings = Settings(_env_file=".env")  # type: ignore[call-arg]
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
+
     database = Database(settings.db_path)
-    s3_client = upload.create_s3_client(settings)
+    await database.connect()
 
-    app = create_app(settings=settings, database=database, s3_client=s3_client)
+    log.info("Starting Car Media Manager on port %d", settings.web_port)
+    log.info("Storage: %s", settings.storage_dir.resolve())
+    log.info("Database: %s", settings.db_path.resolve())
 
-    config = uvicorn.Config(
-        app,
-        host="0.0.0.0",
-        port=settings.web_port,
-        log_level="warning",
-    )
-    server = uvicorn.Server(config)
+    async with upload.s3_client_context(settings) as s3_client:
+        app = create_app(settings=settings, database=database, s3_client=s3_client)
 
-    async def run() -> None:
+        config = uvicorn.Config(
+            app,
+            host="0.0.0.0",
+            port=settings.web_port,
+            log_level="warning",
+        )
+        server = uvicorn.Server(config)
+
         ingest_task = asyncio.create_task(
             ingest_loop(settings=settings, database=database),
         )
@@ -81,17 +78,21 @@ def main() -> None:
             upload_loop(settings=settings, database=database, s3_client=s3_client),
         )
 
-        await server.serve()
+        try:
+            await server.serve()
+        finally:
+            ingest_task.cancel()
+            upload_task.cancel()
+            await database.disconnect()
 
-        ingest_task.cancel()
-        upload_task.cancel()
 
-    log.info("Starting Car Media Manager on port %d", settings.web_port)
-    log.info("Storage: %s", settings.storage_dir.resolve())
-    log.info("Database: %s", settings.db_path.resolve())
-
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
     asyncio.run(run())
-    database.close()
 
 
 if __name__ == "__main__":

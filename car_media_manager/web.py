@@ -6,7 +6,7 @@ import jinja2
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi.responses import HTMLResponse
-from mypy_boto3_s3 import S3Client
+from types_aiobotocore_s3 import S3Client
 
 from car_media_manager import db
 from car_media_manager import ingest
@@ -17,14 +17,15 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
 def format_size(num_bytes: int) -> str:
+    size = float(num_bytes)
     for unit in ("B", "KB", "MB", "GB", "TB"):
-        if abs(num_bytes) < 1024:
-            return f"{num_bytes:.1f} {unit}"
-        num_bytes /= 1024  # type: ignore[assignment]
-    return f"{num_bytes:.1f} PB"
+        if abs(size) < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} PB"
 
 
-def _detected_cameras(settings: Settings) -> list[dict[str, str]]:
+async def _detected_cameras(settings: Settings) -> list[dict[str, str]]:
     detected: list[dict[str, str]] = []
     for mount_path, camera in ingest.find_camera_mounts(settings.volumes_root):
         detected.append(
@@ -34,7 +35,7 @@ def _detected_cameras(settings: Settings) -> list[dict[str, str]]:
                 "mount": str(mount_path),
             }
         )
-    for mount_path, camera in ingest.find_mtp_cameras():
+    for mount_path, camera in await ingest.find_mtp_cameras():
         detected.append(
             {
                 "source": camera.source_name,
@@ -60,11 +61,11 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request) -> HTMLResponse:
-        stats = database.get_stats()
-        recent_files = database.list_recent(limit=50)
-        detected_cameras = await asyncio.to_thread(_detected_cameras, settings)
-        has_internet_now = await asyncio.to_thread(upload.has_internet)
-        disk = shutil.disk_usage(settings.storage_dir)
+        stats = await database.get_stats()
+        recent_files = await database.list_recent(limit=50)
+        detected_cameras = await _detected_cameras(settings)
+        has_internet_now = await upload.has_internet()
+        disk = await asyncio.to_thread(shutil.disk_usage, settings.storage_dir)
 
         template = env.get_template("dashboard.html")
         html = template.render(
@@ -80,8 +81,7 @@ def create_app(
 
     @app.post("/api/ingest")
     async def api_ingest() -> dict[str, int]:
-        ingested = await asyncio.to_thread(
-            ingest.run_ingest_cycle,
+        ingested = await ingest.run_ingest_cycle(
             database=database,
             storage_dir=settings.storage_dir,
             volumes_root=settings.volumes_root,
@@ -90,8 +90,7 @@ def create_app(
 
     @app.post("/api/upload")
     async def api_upload() -> dict[str, int]:
-        uploaded = await asyncio.to_thread(
-            upload.run_upload_cycle,
+        uploaded = await upload.run_upload_cycle(
             database=database,
             s3_client=s3_client,
             bucket=settings.s3_bucket_name,
@@ -101,6 +100,6 @@ def create_app(
 
     @app.get("/api/stats")
     async def api_stats() -> dict[str, int]:
-        return database.get_stats()
+        return await database.get_stats()
 
     return app
