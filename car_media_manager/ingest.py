@@ -1,24 +1,18 @@
 import logging
 import platform
-import re
 import shutil
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 
+from car_media_manager import cameras
 from car_media_manager import db
 from car_media_manager import mtp
 
 log = logging.getLogger(__name__)
 
-GOPRO_MEDIA_DIR = "DCIM"
-GOPRO_EXTENSIONS = {".mp4", ".jpg", ".thm", ".lrv"}
 
-INSTA360_MEDIA_DIR = "DCIM"
-INSTA360_EXTENSIONS = {".mp4", ".insv", ".insp", ".jpg", ".lrv"}
-
-
-def _get_volumes_root() -> Path:
+def _default_volumes_root() -> Path:
     system = platform.system()
     if system == "Darwin":
         return Path("/Volumes")
@@ -27,40 +21,41 @@ def _get_volumes_root() -> Path:
     raise RuntimeError(f"Unsupported platform: {system}")
 
 
-def find_camera_volume(volume_name: str) -> Path | None:
-    volume_path = _get_volumes_root() / volume_name
-    if volume_path.is_dir():
-        return volume_path
-    return None
-
-
-def _scan_media_files(
-    volume_path: Path,
-    media_dir: str,
-    extensions: set[str],
-) -> list[Path]:
-    dcim = volume_path / media_dir
-    if not dcim.is_dir():
+def list_mounted_volumes(volumes_root: Path | None = None) -> list[Path]:
+    root = volumes_root if volumes_root is not None else _default_volumes_root()
+    if not root.is_dir():
         return []
-    files: list[Path] = []
-    for path in dcim.rglob("*"):
-        if path.is_file() and path.suffix.lower() in extensions:
-            files.append(path)
-    return sorted(files)
+    return [p for p in root.iterdir() if p.is_dir()]
 
 
-def scan_gopro(volume_path: Path) -> list[Path]:
-    return _scan_media_files(volume_path, GOPRO_MEDIA_DIR, GOPRO_EXTENSIONS)
+def find_camera_mounts(volumes_root: Path | None = None) -> list[tuple[Path, cameras.Camera]]:
+    mounts: list[tuple[Path, cameras.Camera]] = []
+    for volume in list_mounted_volumes(volumes_root):
+        camera = cameras.identify_camera(volume)
+        if camera is None:
+            continue
+        mounts.append((volume, camera))
+    return mounts
 
 
-def scan_insta360(volume_path: Path) -> list[Path]:
-    return _scan_media_files(volume_path, INSTA360_MEDIA_DIR, INSTA360_EXTENSIONS)
+def find_mtp_cameras() -> list[tuple[Path, cameras.Camera]]:
+    mounts: list[tuple[Path, cameras.Camera]] = []
+    for camera in cameras.KNOWN_CAMERAS:
+        if camera.usb_pattern is None:
+            continue
+        if not mtp.detect_mtp_camera(camera.usb_pattern):
+            continue
+        log.info("%s detected via USB (MTP), mounting...", camera.display_name)
+        mount_path = mtp.mount_mtp_device(camera.source_name)
+        if mount_path:
+            mounts.append((mount_path, camera))
+    return mounts
 
 
 def ingest_file(
     *,
     database: db.Database,
-    source: str,
+    camera: cameras.Camera,
     file_path: Path,
     storage_dir: Path,
 ) -> db.MediaFile | None:
@@ -68,13 +63,13 @@ def ingest_file(
     original_filename = file_path.name
 
     if database.is_ingested(
-        source=source,
+        source=camera.source_name,
         original_filename=original_filename,
         file_size=file_size,
     ):
         return None
 
-    dest_dir = storage_dir / source / datetime.now().strftime("%Y-%m-%d")
+    dest_dir = storage_dir / camera.source_name / datetime.now().strftime("%Y-%m-%d")
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / original_filename
 
@@ -95,7 +90,7 @@ def ingest_file(
     )
 
     return database.insert_media_file(
-        source=source,
+        source=camera.source_name,
         original_filename=original_filename,
         local_path=str(dest_path),
         file_size=file_size,
@@ -103,64 +98,45 @@ def ingest_file(
     )
 
 
-def _find_or_mount_camera(
-    source: str,
-    volume_name: str,
-    usb_pattern: "re.Pattern[str]",
-) -> Path | None:
-    vol = find_camera_volume(volume_name)
-    if vol:
-        return vol
-
-    if mtp.detect_mtp_camera(usb_pattern):
-        log.info("%s detected via USB (MTP), mounting...", source)
-        return mtp.mount_mtp_device(source)
-
-    return None
-
-
 def run_ingest_cycle(
     *,
     database: db.Database,
     storage_dir: Path,
-    gopro_volume_name: str,
-    insta360_volume_name: str,
+    volumes_root: Path | None = None,
 ) -> int:
     ingested = 0
-    mtp_sources: list[str] = []
 
-    sources: list[tuple[str, list[Path]]] = []
+    fs_mounts = find_camera_mounts(volumes_root)
+    mtp_mounts = find_mtp_cameras()
+    all_mounts = fs_mounts + mtp_mounts
 
-    gopro_vol = _find_or_mount_camera("gopro", gopro_volume_name, mtp.GOPRO_USB_PATTERN)
-    if gopro_vol:
-        log.info("GoPro detected at %s", gopro_vol)
-        sources.append(("gopro", scan_gopro(gopro_vol)))
-        if gopro_vol.is_relative_to(mtp.MTP_MOUNT_ROOT):
-            mtp_sources.append("gopro")
+    if not all_mounts:
+        log.debug("No cameras detected")
+        return 0
 
-    insta360_vol = _find_or_mount_camera("insta360", insta360_volume_name, mtp.INSTA360_USB_PATTERN)
-    if insta360_vol:
-        log.info("Insta360 detected at %s", insta360_vol)
-        sources.append(("insta360", scan_insta360(insta360_vol)))
-        if insta360_vol.is_relative_to(mtp.MTP_MOUNT_ROOT):
-            mtp_sources.append("insta360")
+    for mount_path, camera in all_mounts:
+        if camera is cameras.GENERIC:
+            log.warning(
+                "Unknown camera at %s, falling back to generic scan",
+                mount_path,
+            )
+        else:
+            log.info("%s detected at %s", camera.display_name, mount_path)
 
-    for source, files in sources:
-        log.info("Found %d files from %s", len(files), source)
+        files = camera.scan(mount_path)
+        log.info("Found %d files from %s", len(files), camera.source_name)
+
         for file_path in files:
             result = ingest_file(
                 database=database,
-                source=source,
+                camera=camera,
                 file_path=file_path,
                 storage_dir=storage_dir,
             )
             if result:
                 ingested += 1
 
-    for source in mtp_sources:
-        mtp.unmount_mtp_device(source)
-
-    if not sources:
-        log.debug("No cameras detected")
+    for mount_path, _camera in mtp_mounts:
+        mtp.unmount_mtp_device(mount_path.name)
 
     return ingested

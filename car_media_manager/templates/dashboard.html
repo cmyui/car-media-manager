@@ -47,14 +47,18 @@
     <h1>Car Media Manager</h1>
 
     <div class="cameras">
-        <div class="camera-badge">
-            <span class="dot {{ 'online' if gopro_connected else 'offline' }}"></span>
-            GoPro Hero 13
+        {% for cam in detected_cameras %}
+        <div class="camera-badge" title="{{ cam.mount }}">
+            <span class="dot online"></span>
+            {{ cam.display_name }}
         </div>
+        {% endfor %}
+        {% if not detected_cameras %}
         <div class="camera-badge">
-            <span class="dot {{ 'online' if insta360_connected else 'offline' }}"></span>
-            Insta360 X4
+            <span class="dot offline"></span>
+            No cameras detected
         </div>
+        {% endif %}
         <div class="camera-badge">
             <span class="dot {{ 'online' if has_internet else 'offline' }}"></span>
             Internet

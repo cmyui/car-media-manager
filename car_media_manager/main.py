@@ -19,8 +19,7 @@ async def ingest_loop(*, settings: Settings, database: Database) -> None:
             ingested = ingest.run_ingest_cycle(
                 database=database,
                 storage_dir=settings.storage_dir,
-                gopro_volume_name=settings.gopro_volume_name,
-                insta360_volume_name=settings.insta360_volume_name,
+                volumes_root=settings.volumes_root,
             )
             if ingested:
                 log.info("Ingest cycle: %d new files", ingested)

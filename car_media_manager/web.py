@@ -23,6 +23,27 @@ def format_size(num_bytes: int) -> str:
     return f"{num_bytes:.1f} PB"
 
 
+def _detected_cameras(settings: Settings) -> list[dict[str, str]]:
+    detected: list[dict[str, str]] = []
+    for mount_path, camera in ingest.find_camera_mounts(settings.volumes_root):
+        detected.append(
+            {
+                "source": camera.source_name,
+                "display_name": camera.display_name,
+                "mount": str(mount_path),
+            }
+        )
+    for mount_path, camera in ingest.find_mtp_cameras():
+        detected.append(
+            {
+                "source": camera.source_name,
+                "display_name": f"{camera.display_name} (USB)",
+                "mount": str(mount_path),
+            }
+        )
+    return detected
+
+
 def create_app(
     *,
     settings: Settings,
@@ -40,20 +61,14 @@ def create_app(
     async def dashboard(request: Request) -> HTMLResponse:
         stats = database.get_stats()
         recent_files = database.list_recent(limit=50)
-        gopro_connected = (
-            ingest.find_camera_volume(settings.gopro_volume_name) is not None
-        )
-        insta360_connected = (
-            ingest.find_camera_volume(settings.insta360_volume_name) is not None
-        )
+        detected_cameras = await asyncio.to_thread(_detected_cameras, settings)
         has_internet_now = await asyncio.to_thread(upload.has_internet)
 
         template = env.get_template("dashboard.html")
         html = template.render(
             stats=stats,
             recent_files=recent_files,
-            gopro_connected=gopro_connected,
-            insta360_connected=insta360_connected,
+            detected_cameras=detected_cameras,
             has_internet=has_internet_now,
             total_size_display=format_size(stats["total_bytes"]),
             pending_size_display=format_size(stats["pending_bytes"]),
@@ -66,8 +81,7 @@ def create_app(
             ingest.run_ingest_cycle,
             database=database,
             storage_dir=settings.storage_dir,
-            gopro_volume_name=settings.gopro_volume_name,
-            insta360_volume_name=settings.insta360_volume_name,
+            volumes_root=settings.volumes_root,
         )
         return {"ingested": ingested}
 

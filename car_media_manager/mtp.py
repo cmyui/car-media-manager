@@ -8,9 +8,6 @@ log = logging.getLogger(__name__)
 
 MTP_MOUNT_ROOT = Path("/tmp/cmm-mtp")
 
-GOPRO_USB_PATTERN = re.compile(r"GoPro", re.IGNORECASE)
-INSTA360_USB_PATTERN = re.compile(r"Insta\s*360", re.IGNORECASE)
-
 
 def _detect_usb_devices() -> list[dict[str, str]]:
     system = platform.system()

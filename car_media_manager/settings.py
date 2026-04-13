@@ -21,5 +21,4 @@ class Settings(BaseSettings):
     ingest_interval_seconds: int = 300
     upload_interval_seconds: int = 60
 
-    gopro_volume_name: str = "HERO13 BLACK"
-    insta360_volume_name: str = "Insta360 X4"
+    volumes_root: Path | None = None
