@@ -6,7 +6,7 @@ from typing import Any
 
 import databases
 
-SCHEMA = """\
+SCHEMA_MEDIA_FILES = """\
 CREATE TABLE IF NOT EXISTS media_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT NOT NULL,
@@ -17,8 +17,39 @@ CREATE TABLE IF NOT EXISTS media_files (
     ingested_at TEXT NOT NULL,
     uploaded_at TEXT,
     UNIQUE(source, original_filename, file_size)
-);
+)
 """
+
+SCHEMA_MULTIPART_UPLOADS = """\
+CREATE TABLE IF NOT EXISTS multipart_uploads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_file_id INTEGER NOT NULL UNIQUE,
+    s3_bucket TEXT NOT NULL,
+    s3_key TEXT NOT NULL,
+    s3_upload_id TEXT NOT NULL,
+    part_size INTEGER NOT NULL,
+    started_at TEXT NOT NULL,
+    FOREIGN KEY(media_file_id) REFERENCES media_files(id) ON DELETE CASCADE
+)
+"""
+
+SCHEMA_MULTIPART_PARTS = """\
+CREATE TABLE IF NOT EXISTS multipart_parts (
+    multipart_upload_id INTEGER NOT NULL,
+    part_number INTEGER NOT NULL,
+    etag TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    uploaded_at TEXT NOT NULL,
+    PRIMARY KEY (multipart_upload_id, part_number),
+    FOREIGN KEY(multipart_upload_id) REFERENCES multipart_uploads(id) ON DELETE CASCADE
+)
+"""
+
+SCHEMA_STATEMENTS = (
+    SCHEMA_MEDIA_FILES,
+    SCHEMA_MULTIPART_UPLOADS,
+    SCHEMA_MULTIPART_PARTS,
+)
 
 SQLITE_PRAGMAS = (
     "PRAGMA journal_mode=WAL",
@@ -42,6 +73,24 @@ class MediaFile:
     uploaded_at: datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class MultipartUpload:
+    id: int
+    media_file_id: int
+    s3_bucket: str
+    s3_key: str
+    s3_upload_id: str
+    part_size: int
+    started_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class MultipartPart:
+    part_number: int
+    etag: str
+    size: int
+
+
 def _parse_dt(value: str | None) -> datetime | None:
     if value is None:
         return None
@@ -61,6 +110,18 @@ def _row_to_media_file(row: Any) -> MediaFile:
     )
 
 
+def _row_to_multipart_upload(row: Any) -> MultipartUpload:
+    return MultipartUpload(
+        id=row["id"],
+        media_file_id=row["media_file_id"],
+        s3_bucket=row["s3_bucket"],
+        s3_key=row["s3_key"],
+        s3_upload_id=row["s3_upload_id"],
+        part_size=row["part_size"],
+        started_at=datetime.fromisoformat(row["started_at"]),
+    )
+
+
 class Database:
     def __init__(self, db_path: Path) -> None:
         self._url = f"sqlite+aiosqlite:///{db_path}"
@@ -70,7 +131,8 @@ class Database:
         await self._database.connect()
         for pragma in SQLITE_PRAGMAS:
             await self._database.execute(pragma)
-        await self._database.execute(SCHEMA)
+        for statement in SCHEMA_STATEMENTS:
+            await self._database.execute(statement)
 
     async def disconnect(self) -> None:
         await self._database.disconnect()
@@ -181,3 +243,159 @@ class Database:
             values={"limit": limit},
         )
         return [_row_to_media_file(r) for r in rows]
+
+    async def get_multipart_upload(
+        self,
+        media_file_id: int,
+    ) -> MultipartUpload | None:
+        row = await self._database.fetch_one(
+            query="SELECT * FROM multipart_uploads WHERE media_file_id = :media_file_id",
+            values={"media_file_id": media_file_id},
+        )
+        if row is None:
+            return None
+        return _row_to_multipart_upload(row)
+
+    async def create_multipart_upload(
+        self,
+        *,
+        media_file_id: int,
+        s3_bucket: str,
+        s3_key: str,
+        s3_upload_id: str,
+        part_size: int,
+    ) -> MultipartUpload:
+        now = datetime.now(tz=timezone.utc)
+        await self._database.execute(
+            query=(
+                "INSERT INTO multipart_uploads "
+                "(media_file_id, s3_bucket, s3_key, s3_upload_id, part_size, started_at) "
+                "VALUES (:media_file_id, :s3_bucket, :s3_key, :s3_upload_id, :part_size, :started_at)"
+            ),
+            values={
+                "media_file_id": media_file_id,
+                "s3_bucket": s3_bucket,
+                "s3_key": s3_key,
+                "s3_upload_id": s3_upload_id,
+                "part_size": part_size,
+                "started_at": now.isoformat(),
+            },
+        )
+        row = await self._database.fetch_one(
+            query="SELECT * FROM multipart_uploads WHERE media_file_id = :media_file_id",
+            values={"media_file_id": media_file_id},
+        )
+        assert row is not None
+        return _row_to_multipart_upload(row)
+
+    async def delete_multipart_upload(self, multipart_upload_id: int) -> None:
+        await self._database.execute(
+            query="DELETE FROM multipart_uploads WHERE id = :id",
+            values={"id": multipart_upload_id},
+        )
+
+    async def record_part_uploaded(
+        self,
+        *,
+        multipart_upload_id: int,
+        part_number: int,
+        etag: str,
+        size: int,
+    ) -> None:
+        await self._database.execute(
+            query=(
+                "INSERT OR REPLACE INTO multipart_parts "
+                "(multipart_upload_id, part_number, etag, size, uploaded_at) "
+                "VALUES (:multipart_upload_id, :part_number, :etag, :size, :uploaded_at)"
+            ),
+            values={
+                "multipart_upload_id": multipart_upload_id,
+                "part_number": part_number,
+                "etag": etag,
+                "size": size,
+                "uploaded_at": datetime.now(tz=timezone.utc).isoformat(),
+            },
+        )
+
+    async def replace_parts(
+        self,
+        multipart_upload_id: int,
+        parts: list[MultipartPart],
+    ) -> None:
+        await self._database.execute(
+            query="DELETE FROM multipart_parts WHERE multipart_upload_id = :id",
+            values={"id": multipart_upload_id},
+        )
+        if not parts:
+            return
+        now = datetime.now(tz=timezone.utc).isoformat()
+        await self._database.execute_many(
+            query=(
+                "INSERT INTO multipart_parts "
+                "(multipart_upload_id, part_number, etag, size, uploaded_at) "
+                "VALUES (:multipart_upload_id, :part_number, :etag, :size, :uploaded_at)"
+            ),
+            values=[
+                {
+                    "multipart_upload_id": multipart_upload_id,
+                    "part_number": p.part_number,
+                    "etag": p.etag,
+                    "size": p.size,
+                    "uploaded_at": now,
+                }
+                for p in parts
+            ],
+        )
+
+    async def list_completed_parts(
+        self,
+        multipart_upload_id: int,
+    ) -> list[MultipartPart]:
+        rows = await self._database.fetch_all(
+            query=(
+                "SELECT part_number, etag, size FROM multipart_parts "
+                "WHERE multipart_upload_id = :id "
+                "ORDER BY part_number"
+            ),
+            values={"id": multipart_upload_id},
+        )
+        return [
+            MultipartPart(
+                part_number=r["part_number"],
+                etag=r["etag"],
+                size=r["size"],
+            )
+            for r in rows
+        ]
+
+    async def list_active_multipart_progress(self) -> list[dict[str, Any]]:
+        rows = await self._database.fetch_all(
+            query=(
+                "SELECT "
+                "    m.id AS media_file_id, "
+                "    m.source AS source, "
+                "    m.original_filename AS original_filename, "
+                "    m.file_size AS file_size, "
+                "    COALESCE(SUM(p.size), 0) AS bytes_uploaded "
+                "FROM multipart_uploads u "
+                "JOIN media_files m ON m.id = u.media_file_id "
+                "LEFT JOIN multipart_parts p ON p.multipart_upload_id = u.id "
+                "GROUP BY u.id "
+                "ORDER BY u.started_at"
+            ),
+        )
+        result: list[dict[str, Any]] = []
+        for r in rows:
+            total = r["file_size"]
+            done = r["bytes_uploaded"] or 0
+            result.append(
+                {
+                    "media_file_id": r["media_file_id"],
+                    "source": r["source"],
+                    "original_filename": r["original_filename"],
+                    "file_size": total,
+                    "bytes_uploaded": done,
+                    "percent": (done / total * 100) if total else 0.0,
+                }
+            )
+        return result

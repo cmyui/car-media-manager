@@ -42,6 +42,16 @@
         .pending { color: #d29922; }
 
         .refresh-hint { font-size: 0.75rem; color: #484f58; margin-top: 8px; }
+
+        .progress-list { margin-bottom: 32px; display: flex; flex-direction: column; gap: 10px; }
+        .progress-row { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 16px; }
+        .progress-info { display: flex; align-items: baseline; gap: 10px; font-size: 0.85rem; margin-bottom: 8px; }
+        .progress-info .source-tag { background: #21262d; color: #8b949e; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .progress-info .filename { color: #c9d1d9; font-weight: 500; flex: 1; }
+        .progress-info .bytes { color: #6e7681; font-variant-numeric: tabular-nums; }
+        .progress-info .percent { color: #58a6ff; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 45px; text-align: right; }
+        .progress-bar { height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
+        .progress-fill { height: 100%; background: #58a6ff; border-radius: 3px; transition: width 0.3s ease; }
     </style>
 </head>
 <body>
@@ -95,6 +105,25 @@
         <button class="btn" id="upload-btn" onclick="triggerUpload()">Upload Now</button>
         <span class="status-msg" id="action-status"></span>
     </div>
+
+    {% if active_uploads %}
+    <h2>In Progress</h2>
+    <div class="progress-list">
+        {% for up in active_uploads %}
+        <div class="progress-row">
+            <div class="progress-info">
+                <span class="source-tag">{{ up.source }}</span>
+                <span class="filename">{{ up.original_filename }}</span>
+                <span class="bytes">{{ up.bytes_uploaded | format_size }} / {{ up.file_size | format_size }}</span>
+                <span class="percent">{{ "%.1f"|format(up.percent) }}%</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" style="width: {{ up.percent }}%"></div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
 
     <h2>Recent Files</h2>
     <table>

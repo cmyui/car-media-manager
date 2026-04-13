@@ -1,6 +1,7 @@
 import asyncio
 import shutil
 from pathlib import Path
+from typing import Any
 
 import jinja2
 from fastapi import FastAPI
@@ -66,12 +67,14 @@ def create_app(
         detected_cameras = await _detected_cameras(settings)
         has_internet_now = await upload.has_internet()
         disk = await asyncio.to_thread(shutil.disk_usage, settings.storage_dir)
+        active_uploads = await database.list_active_multipart_progress()
 
         template = env.get_template("dashboard.html")
         html = template.render(
             stats=stats,
             recent_files=recent_files,
             detected_cameras=detected_cameras,
+            active_uploads=active_uploads,
             has_internet=has_internet_now,
             storage_used_value=format_size(stats["total_bytes"]),
             storage_total_value=format_size(disk.total),
@@ -101,5 +104,9 @@ def create_app(
     @app.get("/api/stats")
     async def api_stats() -> dict[str, int]:
         return await database.get_stats()
+
+    @app.get("/api/progress")
+    async def api_progress() -> list[dict[str, Any]]:
+        return await database.list_active_multipart_progress()
 
     return app
