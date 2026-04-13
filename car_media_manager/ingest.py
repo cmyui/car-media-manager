@@ -1,6 +1,7 @@
 import logging
 import platform
 import shutil
+import threading
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
@@ -10,6 +11,8 @@ from car_media_manager import db
 from car_media_manager import mtp
 
 log = logging.getLogger(__name__)
+
+_ingest_lock = threading.Lock()
 
 
 def _default_volumes_root() -> Path:
@@ -104,39 +107,46 @@ def run_ingest_cycle(
     storage_dir: Path,
     volumes_root: Path | None = None,
 ) -> int:
-    ingested = 0
-
-    fs_mounts = find_camera_mounts(volumes_root)
-    mtp_mounts = find_mtp_cameras()
-    all_mounts = fs_mounts + mtp_mounts
-
-    if not all_mounts:
-        log.debug("No cameras detected")
+    if not _ingest_lock.acquire(blocking=False):
+        log.debug("Ingest cycle already in progress, skipping")
         return 0
 
-    for mount_path, camera in all_mounts:
-        if camera is cameras.GENERIC:
-            log.warning(
-                "Unknown camera at %s, falling back to generic scan",
-                mount_path,
-            )
-        else:
-            log.info("%s detected at %s", camera.display_name, mount_path)
+    try:
+        ingested = 0
 
-        files = camera.scan(mount_path)
-        log.info("Found %d files from %s", len(files), camera.source_name)
+        fs_mounts = find_camera_mounts(volumes_root)
+        mtp_mounts = find_mtp_cameras()
+        all_mounts = fs_mounts + mtp_mounts
 
-        for file_path in files:
-            result = ingest_file(
-                database=database,
-                camera=camera,
-                file_path=file_path,
-                storage_dir=storage_dir,
-            )
-            if result:
-                ingested += 1
+        if not all_mounts:
+            log.debug("No cameras detected")
+            return 0
 
-    for mount_path, _camera in mtp_mounts:
-        mtp.unmount_mtp_device(mount_path.name)
+        for mount_path, camera in all_mounts:
+            if camera is cameras.GENERIC:
+                log.warning(
+                    "Unknown camera at %s, falling back to generic scan",
+                    mount_path,
+                )
+            else:
+                log.info("%s detected at %s", camera.display_name, mount_path)
 
-    return ingested
+            files = camera.scan(mount_path)
+            log.info("Found %d files from %s", len(files), camera.source_name)
+
+            for file_path in files:
+                result = ingest_file(
+                    database=database,
+                    camera=camera,
+                    file_path=file_path,
+                    storage_dir=storage_dir,
+                )
+                if result:
+                    ingested += 1
+
+        for mount_path, _camera in mtp_mounts:
+            mtp.unmount_mtp_device(mount_path.name)
+
+        return ingested
+    finally:
+        _ingest_lock.release()

@@ -16,7 +16,8 @@ log = logging.getLogger("car_media_manager")
 async def ingest_loop(*, settings: Settings, database: Database) -> None:
     while True:
         try:
-            ingested = ingest.run_ingest_cycle(
+            ingested = await asyncio.to_thread(
+                ingest.run_ingest_cycle,
                 database=database,
                 storage_dir=settings.storage_dir,
                 volumes_root=settings.volumes_root,
@@ -36,7 +37,8 @@ async def upload_loop(
 ) -> None:
     while True:
         try:
-            uploaded = upload.run_upload_cycle(
+            uploaded = await asyncio.to_thread(
+                upload.run_upload_cycle,
                 database=database,
                 s3_client=s3_client,
                 bucket=settings.s3_bucket_name,

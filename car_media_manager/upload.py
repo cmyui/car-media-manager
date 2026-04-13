@@ -1,8 +1,10 @@
 import logging
 import subprocess
+import threading
 from pathlib import Path
 
 import boto3
+from boto3.s3.transfer import TransferConfig
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError
 from botocore.exceptions import ClientError
@@ -15,6 +17,18 @@ log = logging.getLogger(__name__)
 
 CONNECTIVITY_CHECK_HOST = "1.1.1.1"
 CONNECTIVITY_CHECK_TIMEOUT_SECONDS = 3
+
+MULTIPART_CHUNK_SIZE = 4 * 1024 * 1024
+MULTIPART_THRESHOLD = 8 * 1024 * 1024
+MAX_CONCURRENT_PARTS = 4
+
+_upload_lock = threading.Lock()
+_upload_transfer_config = TransferConfig(
+    multipart_threshold=MULTIPART_THRESHOLD,
+    multipart_chunksize=MULTIPART_CHUNK_SIZE,
+    max_concurrency=MAX_CONCURRENT_PARTS,
+    use_threads=True,
+)
 
 
 def has_internet() -> bool:
@@ -37,7 +51,9 @@ def create_s3_client(settings: Settings) -> S3Client:
         aws_access_key_id=settings.s3_access_key_id,
         aws_secret_access_key=settings.s3_secret_access_key,
         config=BotoConfig(
-            retries={"max_attempts": 3, "mode": "adaptive"},
+            retries={"max_attempts": 5, "mode": "adaptive"},
+            connect_timeout=10,
+            read_timeout=60,
         ),
     )
 
@@ -50,7 +66,7 @@ def upload_file(
     s3_key: str,
 ) -> bool:
     try:
-        s3_client.upload_file(local_path, bucket, s3_key)
+        s3_client.upload_file(local_path, bucket, s3_key, Config=_upload_transfer_config)
         return True
     except (BotoCoreError, ClientError):
         log.exception("S3 upload failed for %s", local_path)
@@ -64,29 +80,44 @@ def run_upload_cycle(
     bucket: str,
     s3_prefix: str,
 ) -> int:
-    if not has_internet():
-        log.debug("No internet connectivity")
+    if not _upload_lock.acquire(blocking=False):
+        log.debug("Upload cycle already in progress, skipping")
         return 0
 
-    pending = database.list_pending_upload()
-    if not pending:
-        log.debug("No files pending upload")
-        return 0
+    try:
+        if not has_internet():
+            log.debug("No internet connectivity")
+            return 0
 
-    log.info("%d files pending upload", len(pending))
-    uploaded = 0
+        pending = database.list_pending_upload()
+        if not pending:
+            log.debug("No files pending upload")
+            return 0
 
-    for media_file in pending:
-        local = Path(media_file.local_path)
-        s3_key = f"{s3_prefix}/{media_file.source}/{local.parent.name}/{local.name}"
+        log.info("%d files pending upload", len(pending))
+        uploaded = 0
 
-        log.info("Uploading %s -> s3://%s/%s (%d bytes)", local.name, bucket, s3_key, media_file.file_size)
-        if upload_file(s3_client=s3_client, bucket=bucket, local_path=media_file.local_path, s3_key=s3_key):
-            database.mark_uploaded(media_file.id)
-            uploaded += 1
-            log.info("Uploaded %s", media_file.original_filename)
-        else:
-            log.warning("Failed to upload %s, will retry next cycle", media_file.original_filename)
-            break
+        for media_file in pending:
+            local = Path(media_file.local_path)
+            s3_key = f"{s3_prefix}/{media_file.source}/{local.parent.name}/{local.name}"
 
-    return uploaded
+            log.info(
+                "Uploading %s -> s3://%s/%s (%d bytes)",
+                local.name, bucket, s3_key, media_file.file_size,
+            )
+            if upload_file(
+                s3_client=s3_client,
+                bucket=bucket,
+                local_path=media_file.local_path,
+                s3_key=s3_key,
+            ):
+                database.mark_uploaded(media_file.id)
+                uploaded += 1
+                log.info("Uploaded %s", media_file.original_filename)
+            else:
+                log.warning("Failed to upload %s, will retry next cycle", media_file.original_filename)
+                break
+
+        return uploaded
+    finally:
+        _upload_lock.release()
