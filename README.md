@@ -45,6 +45,22 @@ uv run python -m car_media_manager.main
 
 Open `http://localhost:8000` for the dashboard.
 
+## Install as a systemd service (Raspberry Pi)
+
+```bash
+./deploy/install-service.sh
+```
+
+This installs and enables the service so it starts on boot and restarts on
+failure. Common operations:
+
+```bash
+sudo systemctl status car-media-manager   # check status
+sudo systemctl restart car-media-manager  # restart
+sudo systemctl stop car-media-manager     # stop
+journalctl -u car-media-manager -f        # tail logs
+```
+
 ## Configuration
 
 All config via environment variables (prefix `CMM_`), loaded from `.env`:
