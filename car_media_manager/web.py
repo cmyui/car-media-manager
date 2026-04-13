@@ -1,4 +1,5 @@
 import asyncio
+import shutil
 from pathlib import Path
 
 import jinja2
@@ -63,6 +64,7 @@ def create_app(
         recent_files = database.list_recent(limit=50)
         detected_cameras = await asyncio.to_thread(_detected_cameras, settings)
         has_internet_now = await asyncio.to_thread(upload.has_internet)
+        disk = shutil.disk_usage(settings.storage_dir)
 
         template = env.get_template("dashboard.html")
         html = template.render(
@@ -70,7 +72,7 @@ def create_app(
             recent_files=recent_files,
             detected_cameras=detected_cameras,
             has_internet=has_internet_now,
-            total_size_display=format_size(stats["total_bytes"]),
+            storage_used_display=f"{format_size(stats['total_bytes'])} / {format_size(disk.total)}",
             pending_size_display=format_size(stats["pending_bytes"]),
         )
         return HTMLResponse(html)
