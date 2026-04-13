@@ -17,6 +17,7 @@
         .card .value.green { color: #3fb950; }
         .card .value.yellow { color: #d29922; }
         .card .value.blue { color: #58a6ff; }
+        .card .subvalue { font-size: 0.75rem; color: #6e7681; margin-top: 2px; }
 
         .cameras { display: flex; gap: 12px; margin-bottom: 32px; flex-wrap: wrap; }
         .camera-badge { display: flex; align-items: center; gap: 8px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 8px 14px; font-size: 0.85rem; }
@@ -80,7 +81,8 @@
         </div>
         <div class="card">
             <div class="label">Local Storage Used</div>
-            <div class="value blue">{{ storage_used_display }}</div>
+            <div class="value blue">{{ storage_used_value }}</div>
+            <div class="subvalue">of {{ storage_total_value }}</div>
         </div>
         <div class="card">
             <div class="label">Pending Upload Size</div>
