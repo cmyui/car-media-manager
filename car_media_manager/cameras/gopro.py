@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from pathlib import Path
 
 import httpx
@@ -11,16 +12,35 @@ from car_media_manager.cameras.base import MediaFileInfo
 
 log = logging.getLogger(__name__)
 
-GOPRO_USB_IP = "172.20.170.51"
-GOPRO_WIFI_IP = "10.5.5.9"
-GOPRO_PORT = 8080
+GOPRO_USB_VENDOR_ID = "2672"
+GOPRO_USB_BASE_URL = "http://172.20.170.51:8080"
+GOPRO_WIFI_BASE_URL = "http://10.5.5.9:8080"
+
 MEDIA_EXTENSIONS = frozenset({".mp4", ".jpg", ".thm", ".lrv", ".360"})
 
-DISCOVER_TIMEOUT = httpx.Timeout(connect=1.5, read=3, write=3, pool=3)
-CONNECT_TIMEOUT = httpx.Timeout(connect=5, read=10, write=10, pool=5)
+API_TIMEOUT = httpx.Timeout(connect=5, read=10, write=10, pool=5)
 DOWNLOAD_TIMEOUT = httpx.Timeout(connect=5, read=120, write=10, pool=5)
-
 DOWNLOAD_CHUNK_SIZE = 8 * 1024 * 1024
+
+USB_DEVICE_RE = re.compile(
+    rf"ID {GOPRO_USB_VENDOR_ID}:\w+\s+GoPro",
+    re.IGNORECASE,
+)
+
+
+def _gopro_usb_connected() -> bool:
+    try:
+        lsusb = Path("/dev/bus/usb")
+        if not lsusb.exists():
+            return False
+        # Check /sys/bus/usb for vendor ID
+        for device in Path("/sys/bus/usb/devices").iterdir():
+            vendor_path = device / "idVendor"
+            if vendor_path.exists() and vendor_path.read_text().strip() == GOPRO_USB_VENDOR_ID:
+                return True
+    except OSError:
+        pass
+    return False
 
 
 class GoProCamera(Camera):
@@ -29,30 +49,23 @@ class GoProCamera(Camera):
 
     def __init__(self, base_url: str) -> None:
         self.base_url = base_url
-        self._client = httpx.AsyncClient(base_url=base_url, timeout=CONNECT_TIMEOUT)
+        self._client = httpx.AsyncClient(base_url=base_url, timeout=API_TIMEOUT)
 
     def __repr__(self) -> str:
         return f"GoProCamera({self.base_url})"
 
     @classmethod
-    async def _probe(cls, ip: str) -> Camera | None:
-        url = f"http://{ip}:{GOPRO_PORT}"
-        try:
-            async with httpx.AsyncClient(timeout=DISCOVER_TIMEOUT) as probe:
-                resp = await probe.get(f"{url}/gopro/camera/state")
-                if resp.status_code == 200:
-                    log.info("GoPro found at %s", url)
-                    return cls(url)
-        except httpx.HTTPError:
-            pass
-        return None
-
-    @classmethod
     async def discover(cls) -> list[Camera]:
-        results = await asyncio.gather(
-            *[cls._probe(ip) for ip in (GOPRO_USB_IP, GOPRO_WIFI_IP)],
-        )
-        return [r for r in results if r is not None]
+        cameras: list[Camera] = []
+
+        if _gopro_usb_connected():
+            cameras.append(cls(GOPRO_USB_BASE_URL))
+            log.info("GoPro found via USB")
+
+        # TODO: WiFi discovery via nmcli scan for GoPro SSID
+        # For now, only USB is supported
+
+        return cameras
 
     async def stop_recording(self) -> bool:
         try:
