@@ -8,7 +8,6 @@ from pathlib import Path
 
 from car_media_manager import cameras
 from car_media_manager import db
-from car_media_manager import mtp
 
 log = logging.getLogger(__name__)
 
@@ -41,20 +40,6 @@ def find_camera_mounts(volumes_root: Path | None = None) -> list[tuple[Path, cam
         if camera is None:
             continue
         mounts.append((volume, camera))
-    return mounts
-
-
-async def find_mtp_cameras() -> list[tuple[Path, cameras.Camera]]:
-    mounts: list[tuple[Path, cameras.Camera]] = []
-    for camera in cameras.KNOWN_CAMERAS:
-        if camera.usb_pattern is None:
-            continue
-        if not await mtp.detect_mtp_camera(camera.usb_pattern):
-            continue
-        log.info("%s detected via USB (MTP), mounting...", camera.display_name)
-        mount_path = await mtp.mount_mtp_device(camera.source_name)
-        if mount_path:
-            mounts.append((mount_path, camera))
     return mounts
 
 
@@ -117,9 +102,7 @@ async def run_ingest_cycle(
     async with _ingest_lock:
         ingested = 0
 
-        fs_mounts = find_camera_mounts(volumes_root)
-        mtp_mounts = await find_mtp_cameras()
-        all_mounts = fs_mounts + mtp_mounts
+        all_mounts = find_camera_mounts(volumes_root)
 
         if not all_mounts:
             log.debug("No cameras detected")
@@ -146,8 +129,5 @@ async def run_ingest_cycle(
                 )
                 if result:
                     ingested += 1
-
-        for mount_path, _camera in mtp_mounts:
-            await mtp.unmount_mtp_device(mount_path.name)
 
         return ingested

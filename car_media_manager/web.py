@@ -26,25 +26,15 @@ def format_size(num_bytes: int) -> str:
     return f"{size:.1f} PB"
 
 
-async def _detected_cameras(settings: Settings) -> list[dict[str, str]]:
-    detected: list[dict[str, str]] = []
-    for mount_path, camera in ingest.find_camera_mounts(settings.volumes_root):
-        detected.append(
-            {
-                "source": camera.source_name,
-                "display_name": camera.display_name,
-                "mount": str(mount_path),
-            }
-        )
-    for mount_path, camera in await ingest.find_mtp_cameras():
-        detected.append(
-            {
-                "source": camera.source_name,
-                "display_name": f"{camera.display_name} (USB)",
-                "mount": str(mount_path),
-            }
-        )
-    return detected
+def _detected_cameras(settings: Settings) -> list[dict[str, str]]:
+    return [
+        {
+            "source": camera.source_name,
+            "display_name": camera.display_name,
+            "mount": str(mount_path),
+        }
+        for mount_path, camera in ingest.find_camera_mounts(settings.volumes_root)
+    ]
 
 
 def create_app(
@@ -64,7 +54,7 @@ def create_app(
     async def dashboard(request: Request) -> HTMLResponse:
         stats = await database.get_stats()
         recent_files = await database.list_recent(limit=50)
-        detected_cameras = await _detected_cameras(settings)
+        detected_cameras = _detected_cameras(settings)
         has_internet_now = await upload.has_internet()
         disk = await asyncio.to_thread(shutil.disk_usage, settings.storage_dir)
         active_uploads = await database.list_active_multipart_progress()
