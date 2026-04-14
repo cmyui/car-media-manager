@@ -2,23 +2,23 @@
 
 Auto-sync footage from car-mounted cameras to Wasabi S3.
 
-Built for a multi-camera road trip rig: GoPro Hero 13 (interior), Insta360 X4
-(exterior 360), and DJI Mic 2 (audio). Runs on a Raspberry Pi 5 in the car,
-powered from 12V.
+Built for a multi-camera road trip rig running on a Raspberry Pi 5, powered
+from 12V. Currently supports GoPro (via HTTP API over USB/WiFi), with DJI Osmo
+360 support in progress.
 
 ## How it works
 
 ```
-Cameras record to SD → Pi pulls files over USB (MTP) at rest stops
+Cameras record → Pi pulls files via HTTP API (GoPro) or USB
 → stores on local SSD → uploads to Wasabi S3 when internet is available
 ```
 
-- **Ingest**: Detects cameras via USB volume mount or MTP, scans for new media,
-  copies to local SSD, tracks state in SQLite
-- **Upload**: Checks internet connectivity, uploads pending files to Wasabi S3
-  via boto3, marks as uploaded
-- **Dashboard**: FastAPI web UI at `http://<pi-ip>:8000` showing sync status,
-  upload queue, storage usage, and manual trigger buttons
+- **Ingest**: Discovers connected cameras, lists media via camera-specific
+  adapters, downloads to local SSD, tracks state in SQLite
+- **Upload**: Resumable multipart uploads to S3 with per-part checkpointing.
+  Survives restarts — resumes from last completed part
+- **Dashboard**: FastAPI web UI showing cameras, copy/upload progress with
+  speed and ETA, storage usage, and manual trigger buttons
 
 ## Setup
 
@@ -26,15 +26,6 @@ Cameras record to SD → Pi pulls files over USB (MTP) at rest stops
 uv sync
 cp .env.example .env
 # Fill in your Wasabi S3 credentials in .env
-```
-
-For MTP camera support:
-```bash
-# macOS
-brew install go-mtpfs
-
-# Linux (Raspberry Pi)
-sudo apt install jmtpfs
 ```
 
 ## Run
@@ -45,7 +36,7 @@ uv run python -m car_media_manager.main
 
 Open `http://localhost:8000` for the dashboard.
 
-## Install as a systemd service (Raspberry Pi)
+## Install as a systemd user service (Raspberry Pi)
 
 ```bash
 ./deploy/install-service.sh
@@ -78,20 +69,35 @@ All config via environment variables (prefix `CMM_`), loaded from `.env`:
 | `CMM_S3_PREFIX` | Key prefix in bucket | `car-footage` |
 | `CMM_INGEST_INTERVAL_SECONDS` | Seconds between ingest cycles | `300` |
 | `CMM_UPLOAD_INTERVAL_SECONDS` | Seconds between upload cycles | `60` |
-| `CMM_GOPRO_VOLUME_NAME` | GoPro USB volume name | `HERO13 BLACK` |
-| `CMM_INSTA360_VOLUME_NAME` | Insta360 USB volume name | `Insta360 X4` |
+
+## Camera support
+
+Cameras are pluggable via the `Camera` ABC in `cameras/base.py`. Each adapter
+implements discovery, recording control, media listing, and file download.
+
+| Camera | Status | Protocol |
+|--------|--------|----------|
+| GoPro (Hero 13, Max 2) | Working | HTTP API over USB NCM or WiFi |
+| DJI Osmo 360 | Stub | BLE control (DJI R SDK) + USB file access |
 
 ## Project structure
 
 ```
 car_media_manager/
-    settings.py  — pydantic-settings config
-    db.py        — SQLite schema + operations
-    ingest.py    — Camera detection, file scanning, local copy
-    mtp.py       — MTP device detection and FUSE mounting
-    upload.py    — Internet check + S3 upload
-    web.py       — FastAPI dashboard + API
-    main.py      — Entry point, background loops
+    cameras/
+        base.py      — Camera ABC + CameraRegistry
+        gopro.py     — GoPro HTTP API adapter
+        dji.py       — DJI Osmo stub
+    settings.py      — pydantic-settings config
+    db.py            — SQLite schema + operations (databases + aiosqlite)
+    ingest.py        — Ingest orchestrator with partial copy recovery
+    upload.py        — Resumable multipart S3 upload with per-part checkpointing
+    speed.py         — Rolling speed tracker for ingest/upload throughput
+    web.py           — FastAPI dashboard + API endpoints
+    main.py          — Entry point, background loops, camera registration
     templates/
         dashboard.html
+    deploy/
+        car-media-manager.service  — systemd user service
+        install-service.sh
 ```
