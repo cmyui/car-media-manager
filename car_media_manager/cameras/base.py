@@ -5,6 +5,8 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+from car_media_manager.speed import ProgressCallback
+
 log = logging.getLogger(__name__)
 
 
@@ -37,7 +39,12 @@ class Camera(abc.ABC):
         ...
 
     @abc.abstractmethod
-    async def download_file(self, file_info: MediaFileInfo, dest: Path) -> bool:
+    async def download_file(
+        self,
+        file_info: MediaFileInfo,
+        dest: Path,
+        on_progress: ProgressCallback | None = None,
+    ) -> bool:
         ...
 
 

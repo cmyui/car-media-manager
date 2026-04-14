@@ -52,6 +52,8 @@
         .progress-info .filename { color: #c9d1d9; font-weight: 500; flex: 1; }
         .progress-info .bytes { color: #6e7681; font-variant-numeric: tabular-nums; }
         .progress-info .percent { color: #58a6ff; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 45px; text-align: right; }
+        .progress-info .speed { color: #6e7681; font-variant-numeric: tabular-nums; }
+        .progress-info .eta { color: #3fb950; font-variant-numeric: tabular-nums; }
         .progress-bar { height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
         .progress-fill { height: 100%; background: #58a6ff; border-radius: 3px; transition: width 0.3s ease; }
     </style>
@@ -84,21 +86,31 @@
             <div class="value blue">{{ stats.total_files }}</div>
         </div>
         <div class="card">
-            <div class="label">Pending Upload</div>
-            <div class="value yellow">{{ stats.pending_files }}</div>
-        </div>
-        <div class="card">
             <div class="label">Uploaded</div>
             <div class="value green">{{ stats.uploaded_files }}</div>
+            <div class="subvalue">{{ total_uploaded_bytes }}</div>
         </div>
         <div class="card">
-            <div class="label">Local Storage Used</div>
+            <div class="label">Pending Upload</div>
+            <div class="value yellow">{{ pending_size_display }}</div>
+            <div class="subvalue">{{ stats.pending_files }} files</div>
+        </div>
+        <div class="card">
+            <div class="label">On Camera</div>
+            <div class="value yellow">{{ camera_remaining }}</div>
+        </div>
+        <div class="card">
+            <div class="label">Local Storage</div>
             <div class="value blue">{{ storage_used_value }}</div>
             <div class="subvalue">of {{ storage_total_value }}</div>
         </div>
         <div class="card">
-            <div class="label">Pending Upload Size</div>
-            <div class="value yellow">{{ pending_size_display }}</div>
+            <div class="label">Speeds</div>
+            <div class="value blue" style="font-size: 1.2rem">&#x2B07; {{ ingest_speed }} &#x2B06; {{ upload_speed }}</div>
+        </div>
+        <div class="card">
+            <div class="label">ETA</div>
+            <div class="value green">{{ global_eta }}</div>
         </div>
     </div>
 
@@ -118,6 +130,8 @@
                 <span class="filename">{{ cp.original_filename }}</span>
                 <span class="bytes">{{ cp.bytes_copied | format_size }} / {{ cp.file_size | format_size }}</span>
                 <span class="percent">{{ "%.1f"|format(cp.percent) }}%</span>
+                <span class="speed">{{ cp.speed }}</span>
+                <span class="eta">ETA {{ cp.eta }}</span>
             </div>
             <div class="progress-bar">
                 <div class="progress-fill" style="width: {{ cp.percent }}%"></div>
@@ -137,6 +151,8 @@
                 <span class="filename">{{ up.original_filename }}</span>
                 <span class="bytes">{{ up.bytes_uploaded | format_size }} / {{ up.file_size | format_size }}</span>
                 <span class="percent">{{ "%.1f"|format(up.percent) }}%</span>
+                <span class="speed">{{ up.speed }}</span>
+                <span class="eta">ETA {{ up.eta }}</span>
             </div>
             <div class="progress-bar">
                 <div class="progress-fill" style="width: {{ up.percent }}%"></div>

@@ -9,6 +9,7 @@ import httpx
 
 from car_media_manager.cameras.base import Camera
 from car_media_manager.cameras.base import MediaFileInfo
+from car_media_manager.speed import ProgressCallback
 
 log = logging.getLogger(__name__)
 
@@ -110,7 +111,12 @@ class GoProCamera(Camera):
                 )
         return sorted(files, key=lambda f: f.name)
 
-    async def download_file(self, file_info: MediaFileInfo, dest: Path) -> bool:
+    async def download_file(
+        self,
+        file_info: MediaFileInfo,
+        dest: Path,
+        on_progress: ProgressCallback | None = None,
+    ) -> bool:
         url = f"/videos/DCIM/{file_info.path}"
         try:
             async with self._client.stream(
@@ -127,6 +133,8 @@ class GoProCamera(Camera):
                 with open(dest, "wb") as f:
                     async for chunk in resp.aiter_bytes(DOWNLOAD_CHUNK_SIZE):
                         f.write(chunk)
+                        if on_progress:
+                            on_progress(len(chunk))
             return True
         except httpx.HTTPError:
             log.exception("Download failed for %s", file_info.name)

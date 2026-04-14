@@ -14,17 +14,37 @@ from car_media_manager import ingest
 from car_media_manager import upload
 from car_media_manager.cameras.base import CameraRegistry
 from car_media_manager.settings import Settings
+from car_media_manager.speed import ingest_tracker
+from car_media_manager.speed import upload_tracker
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
-def format_size(num_bytes: int) -> str:
+def format_size(num_bytes: int | float) -> str:
     size = float(num_bytes)
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if abs(size) < 1024:
             return f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} PB"
+
+
+def format_eta(seconds: float | None) -> str:
+    if seconds is None or seconds <= 0:
+        return "-"
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}m {int(seconds % 60)}s"
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    return f"{hours}h {minutes}m"
+
+
+def format_speed(bps: float) -> str:
+    if bps <= 0:
+        return "-"
+    return f"{format_size(bps)}/s"
 
 
 def create_app(
@@ -55,10 +75,49 @@ def create_app(
         active_uploads = await database.list_active_multipart_progress()
         active_copies = await database.list_active_copies()
 
+        ingest_speed = ingest_tracker.bytes_per_second()
+        upload_speed = upload_tracker.bytes_per_second()
+
+        # Files remaining on cameras
+        camera_remaining_bytes = 0
+        ingested_names: set[str] = set()
+        for mf in await database.list_recent(limit=10000):
+            ingested_names.add(f"{mf.source}:{mf.original_filename}")
+        for cam in found:
+            try:
+                media = await cam.list_media()
+                for f in media:
+                    key = f"{cam.source_name}:{f.name}"
+                    if key not in ingested_names:
+                        camera_remaining_bytes += f.size
+            except Exception:
+                pass
+
+        # Compute ETAs
+        ingest_remaining = camera_remaining_bytes
+        for mf in active_copies:
+            dest = Path(mf.local_path)
+            done = dest.stat().st_size if dest.exists() else 0
+            ingest_remaining += mf.file_size - done
+
+        upload_remaining = stats["pending_bytes"]
+        ingest_eta = ingest_tracker.eta_seconds(ingest_remaining)
+        upload_eta = upload_tracker.eta_seconds(upload_remaining)
+
+        if ingest_eta is not None and upload_eta is not None:
+            global_eta = max(ingest_eta, upload_eta)
+        elif ingest_eta is not None:
+            global_eta = ingest_eta
+        elif upload_eta is not None:
+            global_eta = upload_eta
+        else:
+            global_eta = None
+
         copy_progress: list[dict[str, object]] = []
         for mf in active_copies:
             dest = Path(mf.local_path)
             bytes_copied = dest.stat().st_size if dest.exists() else 0
+            remaining = mf.file_size - bytes_copied
             copy_progress.append(
                 {
                     "source": mf.source,
@@ -66,8 +125,17 @@ def create_app(
                     "file_size": mf.file_size,
                     "bytes_copied": bytes_copied,
                     "percent": (bytes_copied / mf.file_size * 100) if mf.file_size else 0,
+                    "speed": format_speed(ingest_speed),
+                    "eta": format_eta(ingest_tracker.eta_seconds(remaining)),
                 }
             )
+
+        upload_progress: list[dict[str, object]] = []
+        for u in active_uploads:
+            remaining = u["file_size"] - u["bytes_uploaded"]
+            u["speed"] = format_speed(upload_speed)
+            u["eta"] = format_eta(upload_tracker.eta_seconds(remaining))
+            upload_progress.append(u)
 
         uploading_file_ids = {u["media_file_id"] for u in active_uploads}
 
@@ -76,13 +144,18 @@ def create_app(
             stats=stats,
             recent_files=recent_files,
             detected_cameras=detected_cameras,
-            active_uploads=active_uploads,
+            active_uploads=upload_progress,
             active_copies=copy_progress,
             uploading_file_ids=uploading_file_ids,
             has_internet=has_internet_now,
             storage_used_value=format_size(disk.used),
             storage_total_value=format_size(disk.total),
             pending_size_display=format_size(stats["pending_bytes"]),
+            ingest_speed=format_speed(ingest_speed),
+            upload_speed=format_speed(upload_speed),
+            global_eta=format_eta(global_eta),
+            camera_remaining=format_size(camera_remaining_bytes),
+            total_uploaded_bytes=format_size(stats["total_bytes"] - stats["pending_bytes"]),
         )
         return HTMLResponse(html)
 

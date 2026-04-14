@@ -8,6 +8,7 @@ from car_media_manager import db
 from car_media_manager.cameras.base import Camera
 from car_media_manager.cameras.base import CameraRegistry
 from car_media_manager.cameras.base import MediaFileInfo
+from car_media_manager.speed import ingest_tracker
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ async def ingest_file(
     )
 
     log.info("Ingesting %s -> %s (%d bytes)", file_info.name, dest_path, file_info.size)
-    ok = await camera.download_file(file_info, dest_path)
+    ok = await camera.download_file(file_info, dest_path, on_progress=ingest_tracker.record)
     if not ok:
         log.error("Failed to download %s", file_info.name)
         if dest_path.exists():

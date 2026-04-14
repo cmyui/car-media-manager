@@ -5,6 +5,7 @@ from pathlib import Path
 
 from car_media_manager.cameras.base import Camera
 from car_media_manager.cameras.base import MediaFileInfo
+from car_media_manager.speed import ProgressCallback
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +33,6 @@ class DJIOsmoCamera(Camera):
         # TODO: USB mass storage or MTP file listing
         raise NotImplementedError
 
-    async def download_file(self, file_info: MediaFileInfo, dest: Path) -> bool:
+    async def download_file(self, file_info: MediaFileInfo, dest: Path, on_progress: ProgressCallback | None = None) -> bool:
         # TODO: USB file copy
         raise NotImplementedError

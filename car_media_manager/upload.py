@@ -13,6 +13,7 @@ from types_aiobotocore_s3 import S3Client
 
 from car_media_manager import db
 from car_media_manager.settings import Settings
+from car_media_manager.speed import upload_tracker
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ async def _put_object_single(
     with open(local_path, "rb") as f:
         body = f.read()
     await s3_client.put_object(Bucket=bucket, Key=s3_key, Body=body)
+    upload_tracker.record(len(body))
 
 
 async def _list_all_s3_parts(
@@ -261,12 +263,14 @@ async def upload_file_resumable(
                     Body=chunk,
                 )
                 etag = part_resp["ETag"]
+                chunk_size = len(chunk)
                 await database.record_part_uploaded(
                     multipart_upload_id=record.id,
                     part_number=part_num,
                     etag=etag,
-                    size=len(chunk),
+                    size=chunk_size,
                 )
+                upload_tracker.record(chunk_size)
                 completed_by_num[part_num] = db.MultipartPart(
                     part_number=part_num, etag=etag, size=len(chunk),
                 )
