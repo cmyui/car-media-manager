@@ -154,6 +154,7 @@
                 <th>Filename</th>
                 <th>Size</th>
                 <th>Ingested</th>
+                <th>Uploaded</th>
                 <th>Status</th>
             </tr>
         </thead>
@@ -164,6 +165,7 @@
                 <td>{{ file.original_filename }}</td>
                 <td>{{ file.file_size | format_size }}</td>
                 <td>{{ file.ingested_at.strftime('%Y-%m-%d %H:%M') if file.ingested_at else '-' }}</td>
+                <td>{{ file.uploaded_at.strftime('%Y-%m-%d %H:%M') if file.uploaded_at else '-' }}</td>
                 {% if file.uploaded_at %}
                 <td class="uploaded">Uploaded</td>
                 {% elif not file.ingested_at %}
@@ -176,7 +178,7 @@
             </tr>
             {% endfor %}
             {% if not recent_files %}
-            <tr><td colspan="5" style="color: #484f58; text-align: center; padding: 24px;">No files ingested yet</td></tr>
+            <tr><td colspan="6" style="color: #484f58; text-align: center; padding: 24px;">No files ingested yet</td></tr>
             {% endif %}
         </tbody>
     </table>
