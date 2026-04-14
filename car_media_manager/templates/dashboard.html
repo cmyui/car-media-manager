@@ -211,8 +211,8 @@
             try {
                 const res = await fetch('/api/ingest', { method: 'POST' });
                 const data = await res.json();
-                status.textContent = `Ingested ${data.ingested} files`;
-                setTimeout(() => location.reload(), 1000);
+                status.textContent = 'Ingest started';
+                setTimeout(() => location.reload(), 3000);
             } catch (e) {
                 status.textContent = 'Error: ' + e.message;
             }
@@ -227,8 +227,8 @@
             try {
                 const res = await fetch('/api/upload', { method: 'POST' });
                 const data = await res.json();
-                status.textContent = `Uploaded ${data.uploaded} files`;
-                setTimeout(() => location.reload(), 1000);
+                status.textContent = 'Upload started';
+                setTimeout(() => location.reload(), 3000);
             } catch (e) {
                 status.textContent = 'Error: ' + e.message;
             }
