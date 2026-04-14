@@ -40,6 +40,7 @@
         tr:hover { background: #161b22; }
         .uploaded { color: #3fb950; }
         .pending { color: #d29922; }
+        .copying { color: #58a6ff; }
 
         .refresh-hint { font-size: 0.75rem; color: #484f58; margin-top: 8px; }
 
@@ -161,9 +162,9 @@
                 <td>{{ file.source }}</td>
                 <td>{{ file.original_filename }}</td>
                 <td>{{ file.file_size | format_size }}</td>
-                <td>{{ file.ingested_at.strftime('%Y-%m-%d %H:%M') }}</td>
-                <td class="{{ 'uploaded' if file.uploaded_at else 'pending' }}">
-                    {{ 'Uploaded' if file.uploaded_at else 'Pending' }}
+                <td>{{ file.ingested_at.strftime('%Y-%m-%d %H:%M') if file.ingested_at else '-' }}</td>
+                <td class="{{ 'uploaded' if file.uploaded_at else ('pending' if file.ingested_at else 'copying') }}">
+                    {{ 'Uploaded' if file.uploaded_at else ('Pending' if file.ingested_at else 'Copying...') }}
                 </td>
             </tr>
             {% endfor %}
