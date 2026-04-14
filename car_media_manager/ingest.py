@@ -70,12 +70,13 @@ async def ingest_file(
 
 
 async def _cleanup_partial_copies(database: db.Database) -> None:
-    stale = await database.delete_incomplete_copies()
+    stale = await database.list_incomplete_copies()
     for mf in stale:
         partial = Path(mf.local_path)
         if partial.exists():
             partial.unlink()
             log.info("Cleaned up partial copy: %s", partial)
+        await database.delete_media_file(mf.id)
 
 
 async def _try_ingest(
