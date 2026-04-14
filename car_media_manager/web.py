@@ -69,6 +69,8 @@ def create_app(
                 }
             )
 
+        uploading_file_ids = {u["media_file_id"] for u in active_uploads}
+
         template = env.get_template("dashboard.html")
         html = template.render(
             stats=stats,
@@ -76,6 +78,7 @@ def create_app(
             detected_cameras=detected_cameras,
             active_uploads=active_uploads,
             active_copies=copy_progress,
+            uploading_file_ids=uploading_file_ids,
             has_internet=has_internet_now,
             storage_used_value=format_size(disk.used),
             storage_total_value=format_size(disk.total),
