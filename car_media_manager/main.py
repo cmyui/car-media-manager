@@ -6,6 +6,8 @@ from types_aiobotocore_s3 import S3Client
 
 from car_media_manager import ingest
 from car_media_manager import upload
+from car_media_manager.cameras import gopro as _gopro_reg  # noqa: F401 (triggers registration)
+from car_media_manager.cameras import dji as _dji_reg  # noqa: F401 (triggers registration)
 from car_media_manager.db import Database
 from car_media_manager.settings import Settings
 from car_media_manager.web import create_app

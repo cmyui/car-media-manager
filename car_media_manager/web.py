@@ -12,6 +12,7 @@ from types_aiobotocore_s3 import S3Client
 from car_media_manager import db
 from car_media_manager import ingest
 from car_media_manager import upload
+from car_media_manager.cameras.base import discover_cameras
 from car_media_manager.settings import Settings
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -26,14 +27,15 @@ def format_size(num_bytes: int) -> str:
     return f"{size:.1f} PB"
 
 
-def _detected_cameras() -> list[dict[str, str]]:
+async def _detected_cameras() -> list[dict[str, str]]:
+    cameras = await discover_cameras()
     return [
         {
-            "source": camera.source_name,
-            "display_name": camera.display_name,
-            "mount": str(mount_path),
+            "source": cam.source_name,
+            "display_name": cam.display_name,
+            "detail": repr(cam),
         }
-        for mount_path, camera in ingest.discover_cameras()
+        for cam in cameras
     ]
 
 
@@ -54,7 +56,7 @@ def create_app(
     async def dashboard(request: Request) -> HTMLResponse:
         stats = await database.get_stats()
         recent_files = await database.list_recent(limit=50)
-        detected_cameras = _detected_cameras()
+        detected_cameras = await _detected_cameras()
         has_internet_now = await upload.has_internet()
         disk = await asyncio.to_thread(shutil.disk_usage, settings.storage_dir)
         active_uploads = await database.list_active_multipart_progress()
