@@ -77,7 +77,7 @@ def create_app(
             active_uploads=active_uploads,
             active_copies=copy_progress,
             has_internet=has_internet_now,
-            storage_used_value=format_size(stats["total_bytes"]),
+            storage_used_value=format_size(disk.used),
             storage_total_value=format_size(disk.total),
             pending_size_display=format_size(stats["pending_bytes"]),
         )
