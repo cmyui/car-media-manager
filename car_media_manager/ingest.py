@@ -20,6 +20,9 @@ def _default_volumes_root() -> Path:
     if system == "Darwin":
         return Path("/Volumes")
     if system == "Linux":
+        gvfs = Path("/run/user/1000/gvfs")
+        if gvfs.is_dir():
+            return gvfs
         return Path("/media") / "pi"
     raise RuntimeError(f"Unsupported platform: {system}")
 
