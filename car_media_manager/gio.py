@@ -5,6 +5,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 log = logging.getLogger(__name__)
 
@@ -125,14 +126,19 @@ async def copy_file(src_uri: str, dest_path: Path, *, timeout: float = 3600) -> 
     return True
 
 
+def _join_uri(base: str, segment: str) -> str:
+    return f"{base}/{quote(segment, safe='')}"
+
+
 async def find_media_root(base_uri: str, media_dir: str = "DCIM") -> str | None:
     entries = await list_files(base_uri)
     if media_dir in entries:
-        return f"{base_uri}/{media_dir}"
+        return _join_uri(base_uri, media_dir)
     for entry in entries:
-        sub_entries = await list_files(f"{base_uri}/{entry}")
+        sub_uri = _join_uri(base_uri, entry)
+        sub_entries = await list_files(sub_uri)
         if media_dir in sub_entries:
-            return f"{base_uri}/{entry}/{media_dir}"
+            return _join_uri(sub_uri, media_dir)
     return None
 
 
@@ -149,7 +155,7 @@ async def scan_media_files(
         for entry in entries:
             if entry.startswith("."):
                 continue
-            entry_uri = f"{current}/{entry}"
+            entry_uri = _join_uri(current, entry)
             if "." in entry:
                 suffix = "." + entry.rsplit(".", 1)[-1]
                 if suffix.lower() in extensions:
