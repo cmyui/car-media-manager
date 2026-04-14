@@ -89,29 +89,32 @@ async def list_files(uri: str) -> list[str]:
     return [line.strip() for line in stdout.splitlines() if line.strip()]
 
 
-async def file_info(uri: str) -> GioFileInfo | None:
+async def list_files_long(uri: str) -> list[GioFileInfo]:
     try:
-        returncode, stdout, _ = await _run_gio("info", uri)
+        returncode, stdout, stderr = await _run_gio("list", "-l", uri)
     except asyncio.TimeoutError:
-        return None
+        log.warning("gio list -l timed out for %s", uri)
+        return []
     if returncode != 0:
-        return None
-
-    name = ""
-    size = 0
+        log.warning("gio list -l failed for %s: %s", uri, stderr.strip())
+        return []
+    results: list[GioFileInfo] = []
     for line in stdout.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("standard::name:"):
-            name = stripped.split(":", 2)[-1].strip()
-        elif stripped.startswith("standard::size:"):
-            try:
-                size = int(stripped.split(":", 2)[-1].strip())
-            except ValueError:
-                pass
-
-    if not name:
-        return None
-    return GioFileInfo(name=name, uri=uri, size=size)
+        line = line.strip()
+        if not line:
+            continue
+        # Format: "filename\tsize\t(type)"
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        name = parts[0].strip()
+        try:
+            size = int(parts[1].strip())
+        except ValueError:
+            size = 0
+        entry_uri = _join_uri(uri, name)
+        results.append(GioFileInfo(name=name, uri=entry_uri, size=size))
+    return results
 
 
 async def copy_file(src_uri: str, dest_path: Path, *, timeout: float = 3600) -> bool:
@@ -151,18 +154,15 @@ async def scan_media_files(
 
     while dirs_to_scan:
         current = dirs_to_scan.pop(0)
-        entries = await list_files(current)
+        entries = await list_files_long(current)
         for entry in entries:
-            if entry.startswith("."):
+            if entry.name.startswith("."):
                 continue
-            entry_uri = _join_uri(current, entry)
-            if "." in entry:
-                suffix = "." + entry.rsplit(".", 1)[-1]
+            if "." in entry.name:
+                suffix = "." + entry.name.rsplit(".", 1)[-1]
                 if suffix.lower() in extensions:
-                    info = await file_info(entry_uri)
-                    if info:
-                        files.append(info)
+                    files.append(entry)
             else:
-                dirs_to_scan.append(entry_uri)
+                dirs_to_scan.append(entry.uri)
 
     return sorted(files, key=lambda f: f.name)
