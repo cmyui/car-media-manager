@@ -19,7 +19,6 @@ async def ingest_loop(*, settings: Settings, database: Database) -> None:
             ingested = await ingest.run_ingest_cycle(
                 database=database,
                 storage_dir=settings.storage_dir,
-                volumes_root=settings.volumes_root,
             )
             if ingested:
                 log.info("Ingest cycle: %d new files", ingested)

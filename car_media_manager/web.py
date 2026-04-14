@@ -26,14 +26,15 @@ def format_size(num_bytes: int) -> str:
     return f"{size:.1f} PB"
 
 
-def _detected_cameras(settings: Settings) -> list[dict[str, str]]:
+async def _detected_cameras() -> list[dict[str, str]]:
+    discovered = await ingest._discover_cameras()
     return [
         {
             "source": camera.source_name,
             "display_name": camera.display_name,
-            "mount": str(mount_path),
+            "mount": media_root_uri,
         }
-        for mount_path, camera in ingest.find_camera_mounts(settings.volumes_root)
+        for media_root_uri, camera in discovered
     ]
 
 
@@ -54,7 +55,7 @@ def create_app(
     async def dashboard(request: Request) -> HTMLResponse:
         stats = await database.get_stats()
         recent_files = await database.list_recent(limit=50)
-        detected_cameras = _detected_cameras(settings)
+        detected_cameras = await _detected_cameras()
         has_internet_now = await upload.has_internet()
         disk = await asyncio.to_thread(shutil.disk_usage, settings.storage_dir)
         active_uploads = await database.list_active_multipart_progress()
@@ -77,7 +78,6 @@ def create_app(
         ingested = await ingest.run_ingest_cycle(
             database=database,
             storage_dir=settings.storage_dir,
-            volumes_root=settings.volumes_root,
         )
         return {"ingested": ingested}
 

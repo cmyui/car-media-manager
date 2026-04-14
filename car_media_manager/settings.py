@@ -20,5 +20,3 @@ class Settings(BaseSettings):
 
     ingest_interval_seconds: int = 300
     upload_interval_seconds: int = 60
-
-    volumes_root: Path | None = None
