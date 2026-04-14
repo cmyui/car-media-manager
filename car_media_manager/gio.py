@@ -59,7 +59,7 @@ async def discover_mtp_mounts() -> list[MtpMount]:
         match = MTP_MOUNT_RE.search(line)
         if not match:
             continue
-        uri = match.group(1).rstrip("/")
+        uri = match.group(1).rstrip("/") + "/"
         if uri in seen_uris:
             continue
         seen_uris.add(uri)
