@@ -12,7 +12,7 @@ from types_aiobotocore_s3 import S3Client
 from car_media_manager import db
 from car_media_manager import ingest
 from car_media_manager import upload
-from car_media_manager.cameras.base import discover_cameras
+from car_media_manager.cameras.base import CameraRegistry
 from car_media_manager.settings import Settings
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -27,23 +27,12 @@ def format_size(num_bytes: int) -> str:
     return f"{size:.1f} PB"
 
 
-async def _detected_cameras() -> list[dict[str, str]]:
-    cameras = await discover_cameras()
-    return [
-        {
-            "source": cam.source_name,
-            "display_name": cam.display_name,
-            "detail": repr(cam),
-        }
-        for cam in cameras
-    ]
-
-
 def create_app(
     *,
     settings: Settings,
     database: db.Database,
     s3_client: S3Client,
+    registry: CameraRegistry,
 ) -> FastAPI:
     app = FastAPI(title="Car Media Manager")
     env = jinja2.Environment(
@@ -56,7 +45,11 @@ def create_app(
     async def dashboard(request: Request) -> HTMLResponse:
         stats = await database.get_stats()
         recent_files = await database.list_recent(limit=50)
-        detected_cameras = await _detected_cameras()
+        found = await registry.discover_all()
+        detected_cameras = [
+            {"source": c.source_name, "display_name": c.display_name, "detail": repr(c)}
+            for c in found
+        ]
         has_internet_now = await upload.has_internet()
         disk = await asyncio.to_thread(shutil.disk_usage, settings.storage_dir)
         active_uploads = await database.list_active_multipart_progress()
@@ -95,6 +88,7 @@ def create_app(
         ingested = await ingest.run_ingest_cycle(
             database=database,
             storage_dir=settings.storage_dir,
+            registry=registry,
         )
         return {"ingested": ingested}
 

@@ -6,8 +6,8 @@ from pathlib import Path
 
 from car_media_manager import db
 from car_media_manager.cameras.base import Camera
+from car_media_manager.cameras.base import CameraRegistry
 from car_media_manager.cameras.base import MediaFileInfo
-from car_media_manager.cameras.base import discover_cameras
 
 log = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ async def run_ingest_cycle(
     *,
     database: db.Database,
     storage_dir: Path,
-    **_kwargs: object,
+    registry: CameraRegistry,
 ) -> int:
     if _ingest_lock.locked():
         log.debug("Ingest cycle already in progress, skipping")
@@ -83,7 +83,7 @@ async def run_ingest_cycle(
 
     async with _ingest_lock:
         await _cleanup_partial_copies(database)
-        cameras = await discover_cameras()
+        cameras = await registry.discover_all()
 
         if not cameras:
             log.debug("No cameras detected")

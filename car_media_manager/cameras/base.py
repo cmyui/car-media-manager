@@ -41,20 +41,19 @@ class Camera(abc.ABC):
         ...
 
 
-_CAMERA_TYPES: list[type[Camera]] = []
+class CameraRegistry:
+    def __init__(self) -> None:
+        self._types: list[type[Camera]] = []
 
+    def register(self, cls: type[Camera]) -> None:
+        self._types.append(cls)
 
-def register_camera_type(cls: type[Camera]) -> type[Camera]:
-    _CAMERA_TYPES.append(cls)
-    return cls
-
-
-async def discover_cameras() -> list[Camera]:
-    cameras: list[Camera] = []
-    for cls in _CAMERA_TYPES:
-        try:
-            found = await cls.discover()
-            cameras.extend(found)
-        except Exception:
-            log.exception("Discovery failed for %s", cls.__name__)
-    return cameras
+    async def discover_all(self) -> list[Camera]:
+        cameras: list[Camera] = []
+        for cls in self._types:
+            try:
+                found = await cls.discover()
+                cameras.extend(found)
+            except Exception:
+                log.exception("Discovery failed for %s", cls.__name__)
+        return cameras

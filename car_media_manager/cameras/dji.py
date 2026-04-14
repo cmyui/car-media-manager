@@ -5,12 +5,10 @@ from pathlib import Path
 
 from car_media_manager.cameras.base import Camera
 from car_media_manager.cameras.base import MediaFileInfo
-from car_media_manager.cameras.base import register_camera_type
 
 log = logging.getLogger(__name__)
 
 
-@register_camera_type
 class DJIOsmoCamera(Camera):
     """Stub — BLE control + USB file access. Needs hardware to implement."""
 
