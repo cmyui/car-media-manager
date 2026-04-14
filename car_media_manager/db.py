@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS media_files (
     local_path TEXT NOT NULL,
     file_size INTEGER NOT NULL,
     created_at TEXT NOT NULL,
-    ingested_at TEXT NOT NULL,
+    ingested_at TEXT,
     uploaded_at TEXT,
     UNIQUE(source, original_filename, file_size)
 )
