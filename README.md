@@ -55,10 +55,10 @@ This installs and enables the service so it starts on boot and restarts on
 failure. Common operations:
 
 ```bash
-sudo systemctl status car-media-manager   # check status
-sudo systemctl restart car-media-manager  # restart
-sudo systemctl stop car-media-manager     # stop
-journalctl -u car-media-manager -f        # tail logs
+systemctl --user status car-media-manager   # check status
+systemctl --user restart car-media-manager  # restart
+systemctl --user stop car-media-manager     # stop
+journalctl --user -u car-media-manager -f   # tail logs
 ```
 
 ## Configuration
