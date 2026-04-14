@@ -15,6 +15,7 @@ GOPRO_WIFI_IP = "10.5.5.9"
 GOPRO_PORT = 8080
 MEDIA_EXTENSIONS = frozenset({".mp4", ".jpg", ".thm", ".lrv", ".360"})
 
+DISCOVER_TIMEOUT = httpx.Timeout(connect=1.5, read=3, write=3, pool=3)
 CONNECT_TIMEOUT = httpx.Timeout(connect=5, read=10, write=10, pool=5)
 DOWNLOAD_TIMEOUT = httpx.Timeout(connect=5, read=120, write=10, pool=5)
 
@@ -33,19 +34,24 @@ class GoProCamera(Camera):
         return f"GoProCamera({self.base_url})"
 
     @classmethod
+    async def _probe(cls, ip: str) -> Camera | None:
+        url = f"http://{ip}:{GOPRO_PORT}"
+        try:
+            async with httpx.AsyncClient(timeout=DISCOVER_TIMEOUT) as probe:
+                resp = await probe.get(f"{url}/gopro/camera/state")
+                if resp.status_code == 200:
+                    log.info("GoPro found at %s", url)
+                    return cls(url)
+        except httpx.HTTPError:
+            pass
+        return None
+
+    @classmethod
     async def discover(cls) -> list[Camera]:
-        cameras: list[Camera] = []
-        for ip in (GOPRO_USB_IP, GOPRO_WIFI_IP):
-            url = f"http://{ip}:{GOPRO_PORT}"
-            try:
-                async with httpx.AsyncClient(timeout=CONNECT_TIMEOUT) as probe:
-                    resp = await probe.get(f"{url}/gopro/camera/state")
-                    if resp.status_code == 200:
-                        cameras.append(cls(url))
-                        log.info("GoPro found at %s", url)
-            except httpx.HTTPError:
-                continue
-        return cameras
+        results = await asyncio.gather(
+            *[cls._probe(ip) for ip in (GOPRO_USB_IP, GOPRO_WIFI_IP)],
+        )
+        return [r for r in results if r is not None]
 
     async def stop_recording(self) -> bool:
         try:
