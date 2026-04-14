@@ -105,7 +105,7 @@ def _row_to_media_file(row: Any) -> MediaFile:
         local_path=row["local_path"],
         file_size=row["file_size"],
         created_at=datetime.fromisoformat(row["created_at"]),
-        ingested_at=datetime.fromisoformat(row["ingested_at"]),
+        ingested_at=_parse_dt(row["ingested_at"]),
         uploaded_at=_parse_dt(row["uploaded_at"]),
     )
 
@@ -168,12 +168,11 @@ class Database:
         file_size: int,
         created_at: datetime,
     ) -> MediaFile:
-        now = datetime.now(tz=timezone.utc)
         await self._database.execute(
             query=(
                 "INSERT INTO media_files "
-                "(source, original_filename, local_path, file_size, created_at, ingested_at) "
-                "VALUES (:source, :original_filename, :local_path, :file_size, :created_at, :ingested_at)"
+                "(source, original_filename, local_path, file_size, created_at) "
+                "VALUES (:source, :original_filename, :local_path, :file_size, :created_at)"
             ),
             values={
                 "source": source,
@@ -181,7 +180,6 @@ class Database:
                 "local_path": local_path,
                 "file_size": file_size,
                 "created_at": created_at.isoformat(),
-                "ingested_at": now.isoformat(),
             },
         )
         row = await self._database.fetch_one(
@@ -200,11 +198,26 @@ class Database:
         assert row is not None
         return _row_to_media_file(row)
 
+    async def mark_ingested(self, file_id: int) -> None:
+        await self._database.execute(
+            query="UPDATE media_files SET ingested_at = :ingested_at WHERE id = :id",
+            values={
+                "ingested_at": datetime.now(tz=timezone.utc).isoformat(),
+                "id": file_id,
+            },
+        )
+
     async def list_pending_upload(self) -> list[MediaFile]:
         rows = await self._database.fetch_all(
             "SELECT * FROM media_files "
-            "WHERE uploaded_at IS NULL "
+            "WHERE ingested_at IS NOT NULL AND uploaded_at IS NULL "
             "ORDER BY ingested_at",
+        )
+        return [_row_to_media_file(r) for r in rows]
+
+    async def list_active_copies(self) -> list[MediaFile]:
+        rows = await self._database.fetch_all(
+            "SELECT * FROM media_files WHERE ingested_at IS NULL",
         )
         return [_row_to_media_file(r) for r in rows]
 

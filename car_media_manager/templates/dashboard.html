@@ -106,8 +106,27 @@
         <span class="status-msg" id="action-status"></span>
     </div>
 
+    {% if active_copies %}
+    <h2>Copying from Camera</h2>
+    <div class="progress-list">
+        {% for cp in active_copies %}
+        <div class="progress-row">
+            <div class="progress-info">
+                <span class="source-tag">{{ cp.source }}</span>
+                <span class="filename">{{ cp.original_filename }}</span>
+                <span class="bytes">{{ cp.bytes_copied | format_size }} / {{ cp.file_size | format_size }}</span>
+                <span class="percent">{{ "%.1f"|format(cp.percent) }}%</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" style="width: {{ cp.percent }}%"></div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
     {% if active_uploads %}
-    <h2>In Progress</h2>
+    <h2>Uploading to Cloud</h2>
     <div class="progress-list">
         {% for up in active_uploads %}
         <div class="progress-row">

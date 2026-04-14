@@ -54,15 +54,19 @@ async def ingest_file(
             counter += 1
 
     log.info("Ingesting %s -> %s (%d bytes)", original_filename, dest_path, file_size)
-    await asyncio.to_thread(shutil.copy2, file_path, dest_path)
 
-    return await database.insert_media_file(
+    record = await database.insert_media_file(
         source=camera.source_name,
         original_filename=original_filename,
         local_path=str(dest_path),
         file_size=file_size,
         created_at=datetime.now(tz=timezone.utc),
     )
+
+    await asyncio.to_thread(shutil.copy2, file_path, dest_path)
+    await database.mark_ingested(record.id)
+
+    return record
 
 
 async def _try_ingest(

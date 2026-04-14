@@ -58,6 +58,21 @@ def create_app(
         has_internet_now = await upload.has_internet()
         disk = await asyncio.to_thread(shutil.disk_usage, settings.storage_dir)
         active_uploads = await database.list_active_multipart_progress()
+        active_copies = await database.list_active_copies()
+
+        copy_progress: list[dict[str, object]] = []
+        for mf in active_copies:
+            dest = Path(mf.local_path)
+            bytes_copied = dest.stat().st_size if dest.exists() else 0
+            copy_progress.append(
+                {
+                    "source": mf.source,
+                    "original_filename": mf.original_filename,
+                    "file_size": mf.file_size,
+                    "bytes_copied": bytes_copied,
+                    "percent": (bytes_copied / mf.file_size * 100) if mf.file_size else 0,
+                }
+            )
 
         template = env.get_template("dashboard.html")
         html = template.render(
@@ -65,6 +80,7 @@ def create_app(
             recent_files=recent_files,
             detected_cameras=detected_cameras,
             active_uploads=active_uploads,
+            active_copies=copy_progress,
             has_internet=has_internet_now,
             storage_used_value=format_size(stats["total_bytes"]),
             storage_total_value=format_size(disk.total),
