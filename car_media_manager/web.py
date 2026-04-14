@@ -84,23 +84,23 @@ def create_app(
         return HTMLResponse(html)
 
     @app.post("/api/ingest")
-    async def api_ingest() -> dict[str, int]:
-        ingested = await ingest.run_ingest_cycle(
+    async def api_ingest() -> dict[str, str]:
+        asyncio.create_task(ingest.run_ingest_cycle(
             database=database,
             storage_dir=settings.storage_dir,
             registry=registry,
-        )
-        return {"ingested": ingested}
+        ))
+        return {"status": "started"}
 
     @app.post("/api/upload")
-    async def api_upload() -> dict[str, int]:
-        uploaded = await upload.run_upload_cycle(
+    async def api_upload() -> dict[str, str]:
+        asyncio.create_task(upload.run_upload_cycle(
             database=database,
             s3_client=s3_client,
             bucket=settings.s3_bucket_name,
             s3_prefix=settings.s3_prefix,
-        )
-        return {"uploaded": uploaded}
+        ))
+        return {"status": "started"}
 
     @app.get("/api/stats")
     async def api_stats() -> dict[str, int]:
