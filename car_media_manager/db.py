@@ -221,6 +221,17 @@ class Database:
         )
         return [_row_to_media_file(r) for r in rows]
 
+    async def delete_incomplete_copies(self) -> list[MediaFile]:
+        rows = await self._database.fetch_all(
+            "SELECT * FROM media_files WHERE ingested_at IS NULL",
+        )
+        stale = [_row_to_media_file(r) for r in rows]
+        if stale:
+            await self._database.execute(
+                "DELETE FROM media_files WHERE ingested_at IS NULL",
+            )
+        return stale
+
     async def mark_uploaded(self, file_id: int) -> None:
         await self._database.execute(
             query="UPDATE media_files SET uploaded_at = :uploaded_at WHERE id = :id",

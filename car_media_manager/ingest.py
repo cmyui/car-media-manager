@@ -69,11 +69,21 @@ async def ingest_file(
     return record
 
 
+async def _cleanup_partial_copies(database: db.Database) -> None:
+    stale = await database.delete_incomplete_copies()
+    for mf in stale:
+        partial = Path(mf.local_path)
+        if partial.exists():
+            partial.unlink()
+            log.info("Cleaned up partial copy: %s", partial)
+
+
 async def _try_ingest(
     *,
     database: db.Database,
     storage_dir: Path,
 ) -> int:
+    await _cleanup_partial_copies(database)
     discovered = discover_cameras()
 
     if not discovered:
