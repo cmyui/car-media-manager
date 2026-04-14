@@ -1,18 +1,28 @@
-"""Async wrapper around the `gio` CLI for MTP device access."""
+"""MTP mount discovery and recovery via gvfs."""
 
 import asyncio
 import logging
-import re
-from dataclasses import dataclass
+import signal
 from pathlib import Path
-from urllib.parse import quote
 
 log = logging.getLogger(__name__)
 
-MTP_MOUNT_RE = re.compile(r"->\s+(mtp://\S+)")
+GVFS_ROOT = Path("/run/user/1000/gvfs")
 
 
-async def _run_gio(*args: str, timeout: float = 60) -> tuple[int, str, str]:
+def discover_mtp_mounts() -> list[Path]:
+    if not GVFS_ROOT.is_dir():
+        return []
+    return [p for p in GVFS_ROOT.iterdir() if p.is_dir() and p.name.startswith("mtp:")]
+
+
+def mtp_path_to_uri(mount_path: Path) -> str:
+    name = mount_path.name
+    host = name.removeprefix("mtp:host=")
+    return f"mtp://{host}/"
+
+
+async def _run_gio(*args: str, timeout: float = 15) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
         "gio",
         *args,
@@ -32,137 +42,31 @@ async def _run_gio(*args: str, timeout: float = 60) -> tuple[int, str, str]:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class MtpMount:
-    uri: str
-    name: str
+async def reset_mtp_session(mount_path: Path) -> bool:
+    uri = mtp_path_to_uri(mount_path)
+    log.warning("Resetting stale MTP session for %s", uri)
 
-
-@dataclass(frozen=True, slots=True)
-class GioFileInfo:
-    name: str
-    uri: str
-    size: int
-
-
-async def discover_mtp_mounts() -> list[MtpMount]:
-    try:
-        _, stdout, _ = await _run_gio("mount", "-l")
-    except (asyncio.TimeoutError, FileNotFoundError):
-        return []
-
-    mounts: list[MtpMount] = []
-    seen_uris: set[str] = set()
-    lines = stdout.splitlines()
-
-    for i, line in enumerate(lines):
-        match = MTP_MOUNT_RE.search(line)
-        if not match:
-            continue
-        uri = match.group(1).rstrip("/") + "/"
-        if uri in seen_uris:
-            continue
-        seen_uris.add(uri)
-
-        name = ""
-        if i > 0:
-            prev = lines[i - 1].strip()
-            if prev.startswith("Mount("):
-                name_part = prev.split(":", 1)
-                if len(name_part) > 1:
-                    name = name_part[1].strip().split(" -> ")[0].strip()
-
-        mounts.append(MtpMount(uri=uri, name=name or uri))
-
-    return mounts
-
-
-async def list_files(uri: str) -> list[str]:
-    try:
-        returncode, stdout, stderr = await _run_gio("list", uri)
-    except asyncio.TimeoutError:
-        log.warning("gio list timed out for %s", uri)
-        return []
-    if returncode != 0:
-        log.warning("gio list failed for %s: %s", uri, stderr.strip())
-        return []
-    return [line.strip() for line in stdout.splitlines() if line.strip()]
-
-
-async def list_files_long(uri: str) -> list[GioFileInfo]:
-    try:
-        returncode, stdout, stderr = await _run_gio("list", "-l", uri)
-    except asyncio.TimeoutError:
-        log.warning("gio list -l timed out for %s", uri)
-        return []
-    if returncode != 0:
-        log.warning("gio list -l failed for %s: %s", uri, stderr.strip())
-        return []
-    results: list[GioFileInfo] = []
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        # Format: "filename\tsize\t(type)"
-        parts = line.split("\t")
-        if len(parts) < 2:
-            continue
-        name = parts[0].strip()
+    for proc_dir in Path("/proc").iterdir():
         try:
-            size = int(parts[1].strip())
-        except ValueError:
-            size = 0
-        entry_uri = _join_uri(uri, name)
-        results.append(GioFileInfo(name=name, uri=entry_uri, size=size))
-    return results
+            cmdline = (proc_dir / "cmdline").read_bytes().decode(errors="replace")
+            if "gvfsd-mtp" in cmdline:
+                pid = int(proc_dir.name)
+                log.info("Killing gvfsd-mtp (PID %d)", pid)
+                proc_dir.name  # validate it's numeric
+                import os
+                os.kill(pid, signal.SIGTERM)
+        except (ValueError, ProcessLookupError, PermissionError, FileNotFoundError):
+            continue
 
+    await asyncio.sleep(2)
 
-async def copy_file(src_uri: str, dest_path: Path, *, timeout: float = 3600) -> bool:
     try:
-        returncode, _, stderr = await _run_gio("copy", src_uri, str(dest_path), timeout=timeout)
+        returncode, _, stderr = await _run_gio("mount", uri, timeout=15)
+        if returncode != 0:
+            log.error("Failed to remount %s: %s", uri, stderr.strip())
+            return False
+        log.info("Remounted %s", uri)
+        return True
     except asyncio.TimeoutError:
-        log.warning("gio copy timed out for %s", src_uri)
+        log.error("Timed out remounting %s", uri)
         return False
-    if returncode != 0:
-        log.warning("gio copy failed for %s: %s", src_uri, stderr.strip())
-        return False
-    return True
-
-
-def _join_uri(base: str, segment: str) -> str:
-    return f"{base.rstrip('/')}/{quote(segment, safe='')}"
-
-
-async def find_media_root(base_uri: str, media_dir: str = "DCIM") -> str | None:
-    entries = await list_files(base_uri)
-    if media_dir in entries:
-        return _join_uri(base_uri, media_dir)
-    for entry in entries:
-        sub_uri = _join_uri(base_uri, entry)
-        sub_entries = await list_files(sub_uri)
-        if media_dir in sub_entries:
-            return _join_uri(sub_uri, media_dir)
-    return None
-
-
-async def scan_media_files(
-    media_root_uri: str,
-    extensions: frozenset[str],
-) -> list[GioFileInfo]:
-    files: list[GioFileInfo] = []
-    dirs_to_scan = [media_root_uri]
-
-    while dirs_to_scan:
-        current = dirs_to_scan.pop(0)
-        entries = await list_files_long(current)
-        for entry in entries:
-            if entry.name.startswith("."):
-                continue
-            if "." in entry.name:
-                suffix = "." + entry.name.rsplit(".", 1)[-1]
-                if suffix.lower() in extensions:
-                    files.append(entry)
-            else:
-                dirs_to_scan.append(entry.uri)
-
-    return sorted(files, key=lambda f: f.name)
