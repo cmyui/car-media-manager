@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 MTP_MOUNT_RE = re.compile(r"->\s+(mtp://\S+)")
 
 
-async def _run_gio(*args: str, timeout: float = 30) -> tuple[int, str, str]:
+async def _run_gio(*args: str, timeout: float = 60) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
         "gio",
         *args,
