@@ -127,7 +127,7 @@ async def copy_file(src_uri: str, dest_path: Path, *, timeout: float = 3600) -> 
 
 
 def _join_uri(base: str, segment: str) -> str:
-    return f"{base}/{quote(segment, safe='')}"
+    return f"{base.rstrip('/')}/{quote(segment, safe='')}"
 
 
 async def find_media_root(base_uri: str, media_dir: str = "DCIM") -> str | None:
