@@ -33,6 +33,11 @@ class DJIOsmoCamera(Camera):
         # TODO: USB mass storage or MTP file listing
         raise NotImplementedError
 
-    async def download_file(self, file_info: MediaFileInfo, dest: Path, on_progress: ProgressCallback | None = None) -> bool:
+    async def download_file(
+        self,
+        file_info: MediaFileInfo,
+        dest: Path,
+        on_progress: ProgressCallback | None = None,
+    ) -> bool:
         # TODO: USB file copy
         raise NotImplementedError
