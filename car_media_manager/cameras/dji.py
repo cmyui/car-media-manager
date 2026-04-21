@@ -7,6 +7,10 @@ from pathlib import Path
 
 from car_media_manager.cameras.base import Camera
 from car_media_manager.cameras.base import MediaFileInfo
+from car_media_manager.cameras.dji_ble import pairing_store
+from car_media_manager.cameras.dji_ble.client import DJIBLESession
+from car_media_manager.cameras.dji_ble.client import PairingInfo
+from car_media_manager.cameras.dji_ble.client import scan_for_cameras
 from car_media_manager.speed import ProgressCallback
 
 log = logging.getLogger(__name__)
@@ -22,26 +26,68 @@ class DJIOsmoCamera(Camera):
     source_name = "dji"
     display_name = "DJI Osmo 360"
 
-    def __init__(self, mount_path: Path) -> None:
+    # Set at app startup before registry.discover_all() is called
+    storage_dir: Path | None = None
+
+    def __init__(
+        self,
+        *,
+        mount_path: Path | None = None,
+        pairing: PairingInfo | None = None,
+    ) -> None:
         self.mount_path = mount_path
+        self.pairing = pairing
 
     def __repr__(self) -> str:
-        return f"DJIOsmoCamera({self.mount_path})"
+        parts: list[str] = []
+        if self.mount_path:
+            parts.append(f"usb={self.mount_path}")
+        if self.pairing:
+            parts.append(f"ble={self.pairing.address}")
+        return f"DJIOsmoCamera({', '.join(parts) or 'not connected'})"
 
     @classmethod
     async def discover(cls) -> list[Camera]:
-        if DJI_MOUNT_PATH.is_dir() and (DJI_MOUNT_PATH / MEDIA_DIR).is_dir():
-            log.info("DJI Osmo 360 found at %s", DJI_MOUNT_PATH)
-            return [cls(DJI_MOUNT_PATH)]
-        return []
+        mount = (
+            DJI_MOUNT_PATH
+            if (DJI_MOUNT_PATH.is_dir() and (DJI_MOUNT_PATH / MEDIA_DIR).is_dir())
+            else None
+        )
+        pairing = pairing_store.load(cls.storage_dir) if cls.storage_dir else None
+
+        if mount is None and pairing is None:
+            return []
+
+        log.info(
+            "DJI Osmo 360 detected: usb=%s ble=%s", mount, pairing and pairing.address
+        )
+        return [cls(mount_path=mount, pairing=pairing)]
 
     async def stop_recording(self) -> bool:
-        raise NotImplementedError("DJI BLE R SDK not yet implemented")
+        return await self._record_control(start=False)
 
     async def start_recording(self) -> bool:
-        raise NotImplementedError("DJI BLE R SDK not yet implemented")
+        return await self._record_control(start=True)
+
+    async def _record_control(self, *, start: bool) -> bool:
+        if self.pairing is None:
+            log.error("DJI camera not paired; cannot control recording")
+            return False
+        try:
+            async with DJIBLESession(self.pairing.address) as session:
+                await session.reconnect()
+                if start:
+                    await session.start_recording(device_id=self.pairing.device_id)
+                else:
+                    await session.stop_recording(device_id=self.pairing.device_id)
+            return True
+        except Exception:
+            log.exception("BLE record control failed (start=%s)", start)
+            return False
 
     async def list_media(self) -> list[MediaFileInfo]:
+        if self.mount_path is None:
+            return []
         media_root = self.mount_path / MEDIA_DIR
         if not media_root.is_dir():
             return []
@@ -73,6 +119,9 @@ class DJIOsmoCamera(Camera):
         dest: Path,
         on_progress: ProgressCallback | None = None,
     ) -> bool:
+        if self.mount_path is None:
+            log.error("DJI camera not USB-connected; cannot download files")
+            return False
         src = self.mount_path / file_info.path
         if not src.is_file():
             log.error("Source file missing: %s", src)
@@ -83,7 +132,10 @@ class DJIOsmoCamera(Camera):
                 await asyncio.to_thread(shutil.copy2, src, dest)
             else:
                 await asyncio.to_thread(
-                    _copy_with_progress, src, dest, on_progress,
+                    _copy_with_progress,
+                    src,
+                    dest,
+                    on_progress,
                 )
             return True
         except OSError:
@@ -91,6 +143,26 @@ class DJIOsmoCamera(Camera):
             if dest.exists():
                 dest.unlink()
             return False
+
+
+async def pair_new_camera(storage_dir: Path) -> PairingInfo:
+    """One-time pairing flow — camera will show a confirmation popup.
+
+    The user must physically tap 'accept' on the camera screen within ~30s.
+    """
+    cameras = await scan_for_cameras()
+    if not cameras:
+        raise RuntimeError("No DJI cameras found via BLE scan")
+    if len(cameras) > 1:
+        log.warning("Multiple DJI cameras found; using first: %s", cameras)
+    camera = cameras[0]
+    log.info("Pairing with %s (%s)", camera.name, camera.address)
+
+    async with DJIBLESession(camera.address) as session:
+        info = await session.pair(wait_for_user=True)
+
+    pairing_store.save(storage_dir, info)
+    return info
 
 
 def _copy_with_progress(

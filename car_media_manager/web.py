@@ -12,7 +12,9 @@ from types_aiobotocore_s3 import S3Client
 from car_media_manager import db
 from car_media_manager import ingest
 from car_media_manager import upload
+from car_media_manager.cameras import dji as dji_camera
 from car_media_manager.cameras.base import CameraRegistry
+from car_media_manager.cameras.dji import DJIOsmoCamera
 from car_media_manager.settings import Settings
 from car_media_manager.speed import ingest_tracker
 from car_media_manager.speed import upload_tracker
@@ -66,10 +68,20 @@ def create_app(
         stats = await database.get_stats()
         recent_files = await database.list_recent(limit=50)
         found = await registry.discover_all()
-        detected_cameras = [
-            {"source": c.source_name, "display_name": c.display_name, "detail": repr(c)}
-            for c in found
-        ]
+        detected_cameras: list[dict[str, Any]] = []
+        for c in found:
+            capabilities = []
+            if isinstance(c, DJIOsmoCamera):
+                if c.mount_path is not None:
+                    capabilities.append("USB")
+                if c.pairing is not None:
+                    capabilities.append(f"BLE ({c.pairing.address})")
+            detected_cameras.append({
+                "source": c.source_name,
+                "display_name": c.display_name,
+                "detail": repr(c),
+                "capabilities": capabilities,
+            })
         has_internet_now = await upload.has_internet()
         disk = await asyncio.to_thread(shutil.disk_usage, settings.storage_dir)
         active_uploads = await database.list_active_multipart_progress()
@@ -185,5 +197,39 @@ def create_app(
     @app.get("/api/progress")
     async def api_progress() -> list[dict[str, Any]]:
         return await database.list_active_multipart_progress()
+
+    @app.post("/api/dji/pair")
+    async def api_dji_pair() -> dict[str, str]:
+        try:
+            info = await dji_camera.pair_new_camera(settings.storage_dir)
+            return {
+                "status": "paired",
+                "address": info.address,
+                "device_id": f"0x{info.device_id:04x}",
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
+    @app.post("/api/dji/start_recording")
+    async def api_dji_start_recording() -> dict[str, str]:
+        cam = await _find_dji()
+        if cam is None:
+            return {"status": "error", "error": "DJI not paired"}
+        ok = await cam.start_recording()
+        return {"status": "started" if ok else "failed"}
+
+    @app.post("/api/dji/stop_recording")
+    async def api_dji_stop_recording() -> dict[str, str]:
+        cam = await _find_dji()
+        if cam is None:
+            return {"status": "error", "error": "DJI not paired"}
+        ok = await cam.stop_recording()
+        return {"status": "stopped" if ok else "failed"}
+
+    async def _find_dji() -> DJIOsmoCamera | None:
+        for cam in await registry.discover_all():
+            if isinstance(cam, DJIOsmoCamera):
+                return cam
+        return None
 
     return app

@@ -63,9 +63,9 @@
 
     <div class="cameras">
         {% for cam in detected_cameras %}
-        <div class="camera-badge" title="{{ cam.mount }}">
+        <div class="camera-badge" title="{{ cam.detail }}">
             <span class="dot online"></span>
-            {{ cam.display_name }}
+            {{ cam.display_name }}{% if cam.capabilities %} — {{ cam.capabilities | join(" + ") }}{% endif %}
         </div>
         {% endfor %}
         {% if not detected_cameras %}
@@ -118,6 +118,13 @@
         <button class="btn primary" id="ingest-btn" onclick="triggerIngest()">Ingest Now</button>
         <button class="btn" id="upload-btn" onclick="triggerUpload()">Upload Now</button>
         <span class="status-msg" id="action-status"></span>
+    </div>
+
+    <div class="actions">
+        <button class="btn" onclick="djiPair()">Pair DJI Camera</button>
+        <button class="btn" onclick="djiStart()">DJI: Start Recording</button>
+        <button class="btn" onclick="djiStop()">DJI: Stop Recording</button>
+        <span class="status-msg" id="dji-status"></span>
     </div>
 
     {% if active_copies %}
@@ -234,6 +241,30 @@
             }
             btn.disabled = false;
         }
+
+        async function djiCall(path, verb) {
+            const status = document.getElementById('dji-status');
+            status.textContent = verb + '...';
+            try {
+                const res = await fetch(path, { method: 'POST' });
+                const data = await res.json();
+                if (data.status === 'error') {
+                    status.textContent = 'Error: ' + data.error;
+                } else {
+                    status.textContent = verb + ' ' + data.status;
+                }
+            } catch (e) {
+                status.textContent = 'Error: ' + e.message;
+            }
+        }
+
+        function djiPair() {
+            const status = document.getElementById('dji-status');
+            status.textContent = 'Scanning for camera — accept the pairing prompt on the camera screen';
+            djiCall('/api/dji/pair', 'Pair');
+        }
+        function djiStart() { djiCall('/api/dji/start_recording', 'Start'); }
+        function djiStop() { djiCall('/api/dji/stop_recording', 'Stop'); }
     </script>
 </body>
 </html>
