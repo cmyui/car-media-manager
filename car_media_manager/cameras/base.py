@@ -3,11 +3,19 @@ from __future__ import annotations
 import abc
 import logging
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
+from typing import Any
+from typing import ClassVar
 
 from car_media_manager.speed import ProgressCallback
 
 log = logging.getLogger(__name__)
+
+
+class CameraVendor(StrEnum):
+    DJI = "dji"
+    GOPRO = "gopro"
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,8 +26,35 @@ class MediaFileInfo:
 
 
 class Camera(abc.ABC):
-    source_name: str
-    display_name: str
+    vendor: ClassVar[CameraVendor]
+    display_name: ClassVar[str]
+
+    @property
+    @abc.abstractmethod
+    def camera_id(self) -> str:
+        """Stable identifier unique within (vendor, camera_id)."""
+
+    @property
+    def capabilities(self) -> list[str]:
+        return []
+
+    @property
+    def supports_pairing(self) -> bool:
+        return False
+
+    @property
+    def is_paired(self) -> bool:
+        return False
+
+    @property
+    def supports_remote_control(self) -> bool:
+        return False
+
+    async def pair(self, storage_dir: Path) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def unpair(self, storage_dir: Path) -> None:
+        raise NotImplementedError
 
     @classmethod
     @abc.abstractmethod
@@ -64,3 +99,9 @@ class CameraRegistry:
             except Exception:
                 log.exception("Discovery failed for %s", cls.__name__)
         return cameras
+
+    async def find(self, vendor: CameraVendor, camera_id: str) -> Camera | None:
+        for cam in await self.discover_all():
+            if cam.vendor == vendor and cam.camera_id == camera_id:
+                return cam
+        return None

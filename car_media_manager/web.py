@@ -5,6 +5,7 @@ from typing import Any
 
 import jinja2
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi import Request
 from fastapi.responses import HTMLResponse
 from types_aiobotocore_s3 import S3Client
@@ -12,9 +13,9 @@ from types_aiobotocore_s3 import S3Client
 from car_media_manager import db
 from car_media_manager import ingest
 from car_media_manager import upload
-from car_media_manager.cameras import dji as dji_camera
+from car_media_manager.cameras.base import Camera
 from car_media_manager.cameras.base import CameraRegistry
-from car_media_manager.cameras.dji import DJIOsmoCamera
+from car_media_manager.cameras.base import CameraVendor
 from car_media_manager.settings import Settings
 from car_media_manager.speed import ingest_tracker
 from car_media_manager.speed import upload_tracker
@@ -49,6 +50,19 @@ def format_speed(bps: float) -> str:
     return f"{format_size(bps)}/s"
 
 
+def _camera_view(cam: Camera) -> dict[str, Any]:
+    return {
+        "vendor": cam.vendor,
+        "camera_id": cam.camera_id,
+        "display_name": cam.display_name,
+        "detail": repr(cam),
+        "capabilities": cam.capabilities,
+        "supports_pairing": cam.supports_pairing,
+        "supports_remote_control": cam.supports_remote_control,
+        "is_paired": cam.is_paired,
+    }
+
+
 def create_app(
     *,
     settings: Settings,
@@ -68,20 +82,7 @@ def create_app(
         stats = await database.get_stats()
         recent_files = await database.list_recent(limit=50)
         found = await registry.discover_all()
-        detected_cameras: list[dict[str, Any]] = []
-        for c in found:
-            capabilities = []
-            if isinstance(c, DJIOsmoCamera):
-                if c.mount_path is not None:
-                    capabilities.append("USB")
-                if c.pairing is not None:
-                    capabilities.append(f"BLE ({c.pairing.address})")
-            detected_cameras.append({
-                "source": c.source_name,
-                "display_name": c.display_name,
-                "detail": repr(c),
-                "capabilities": capabilities,
-            })
+        detected_cameras = [_camera_view(c) for c in found]
         has_internet_now = await upload.has_internet()
         disk = await asyncio.to_thread(shutil.disk_usage, settings.storage_dir)
         active_uploads = await database.list_active_multipart_progress()
@@ -94,12 +95,12 @@ def create_app(
         camera_remaining_bytes = 0
         ingested_names: set[str] = set()
         for mf in await database.list_recent(limit=10000):
-            ingested_names.add(f"{mf.source}:{mf.original_filename}")
+            ingested_names.add(f"{mf.vendor}:{mf.original_filename}")
         for cam in found:
             try:
                 media = await cam.list_media()
                 for f in media:
-                    key = f"{cam.source_name}:{f.name}"
+                    key = f"{cam.vendor}:{f.name}"
                     if key not in ingested_names:
                         camera_remaining_bytes += f.size
             except Exception:
@@ -132,7 +133,7 @@ def create_app(
             remaining = mf.file_size - bytes_copied
             copy_progress.append(
                 {
-                    "source": mf.source,
+                    "vendor": mf.vendor,
                     "original_filename": mf.original_filename,
                     "file_size": mf.file_size,
                     "bytes_copied": bytes_copied,
@@ -160,7 +161,7 @@ def create_app(
             active_copies=copy_progress,
             uploading_file_ids=uploading_file_ids,
             has_internet=has_internet_now,
-            storage_used_value=format_size(disk.used),
+            storage_free_value=format_size(disk.free),
             storage_total_value=format_size(disk.total),
             pending_size_display=format_size(stats["pending_bytes"]),
             ingest_speed=format_speed(ingest_speed),
@@ -198,38 +199,50 @@ def create_app(
     async def api_progress() -> list[dict[str, Any]]:
         return await database.list_active_multipart_progress()
 
-    @app.post("/api/dji/pair")
-    async def api_dji_pair() -> dict[str, str]:
+    @app.get("/api/cameras")
+    async def api_cameras() -> list[dict[str, Any]]:
+        return [_camera_view(c) for c in await registry.discover_all()]
+
+    @app.post("/api/cameras/{vendor}/{camera_id}/pair")
+    async def api_camera_pair(vendor: CameraVendor, camera_id: str) -> dict[str, Any]:
+        cam = await registry.find(vendor, camera_id)
+        if cam is None:
+            raise HTTPException(status_code=404, detail="Camera not found")
+        if not cam.supports_pairing:
+            raise HTTPException(status_code=400, detail="Camera does not support pairing")
         try:
-            info = await dji_camera.pair_new_camera(settings.storage_dir)
-            return {
-                "status": "paired",
-                "address": info.address,
-                "device_id": f"0x{info.device_id:04x}",
-            }
+            return await cam.pair(settings.storage_dir)
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    @app.post("/api/dji/start_recording")
-    async def api_dji_start_recording() -> dict[str, str]:
-        cam = await _find_dji()
+    @app.post("/api/cameras/{vendor}/{camera_id}/unpair")
+    async def api_camera_unpair(vendor: CameraVendor, camera_id: str) -> dict[str, str]:
+        cam = await registry.find(vendor, camera_id)
         if cam is None:
-            return {"status": "error", "error": "DJI not paired"}
+            raise HTTPException(status_code=404, detail="Camera not found")
+        if not cam.supports_pairing:
+            raise HTTPException(status_code=400, detail="Camera does not support pairing")
+        await cam.unpair(settings.storage_dir)
+        return {"status": "unpaired"}
+
+    @app.post("/api/cameras/{vendor}/{camera_id}/start_recording")
+    async def api_camera_start(vendor: CameraVendor, camera_id: str) -> dict[str, str]:
+        cam = await registry.find(vendor, camera_id)
+        if cam is None:
+            raise HTTPException(status_code=404, detail="Camera not found")
+        if not cam.supports_remote_control:
+            raise HTTPException(status_code=400, detail="Camera does not support remote control")
         ok = await cam.start_recording()
         return {"status": "started" if ok else "failed"}
 
-    @app.post("/api/dji/stop_recording")
-    async def api_dji_stop_recording() -> dict[str, str]:
-        cam = await _find_dji()
+    @app.post("/api/cameras/{vendor}/{camera_id}/stop_recording")
+    async def api_camera_stop(vendor: CameraVendor, camera_id: str) -> dict[str, str]:
+        cam = await registry.find(vendor, camera_id)
         if cam is None:
-            return {"status": "error", "error": "DJI not paired"}
+            raise HTTPException(status_code=404, detail="Camera not found")
+        if not cam.supports_remote_control:
+            raise HTTPException(status_code=400, detail="Camera does not support remote control")
         ok = await cam.stop_recording()
         return {"status": "stopped" if ok else "failed"}
-
-    async def _find_dji() -> DJIOsmoCamera | None:
-        for cam in await registry.discover_all():
-            if isinstance(cam, DJIOsmoCamera):
-                return cam
-        return None
 
     return app

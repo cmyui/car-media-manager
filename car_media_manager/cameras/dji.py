@@ -4,8 +4,10 @@ import asyncio
 import logging
 import shutil
 from pathlib import Path
+from typing import Any
 
 from car_media_manager.cameras.base import Camera
+from car_media_manager.cameras.base import CameraVendor
 from car_media_manager.cameras.base import MediaFileInfo
 from car_media_manager.cameras.dji_ble import pairing_store
 from car_media_manager.cameras.dji_ble.client import DJIBLESession
@@ -21,9 +23,11 @@ MEDIA_EXTENSIONS = frozenset({".osv", ".lrf", ".mp4", ".jpg", ".dng"})
 
 COPY_BUFFER_SIZE = 8 * 1024 * 1024
 
+UNPAIRED_USB_ID = "unpaired-usb"
+
 
 class DJIOsmoCamera(Camera):
-    source_name = "dji"
+    vendor = CameraVendor.DJI
     display_name = "DJI Osmo 360"
 
     # Set at app startup before registry.discover_all() is called
@@ -46,22 +50,78 @@ class DJIOsmoCamera(Camera):
             parts.append(f"ble={self.pairing.address}")
         return f"DJIOsmoCamera({', '.join(parts) or 'not connected'})"
 
+    @property
+    def camera_id(self) -> str:
+        if self.pairing is not None:
+            return self.pairing.address.replace(":", "").lower()
+        return UNPAIRED_USB_ID
+
+    @property
+    def capabilities(self) -> list[str]:
+        caps: list[str] = []
+        if self.mount_path is not None:
+            caps.append("USB")
+        if self.pairing is not None:
+            caps.append(f"BLE ({self.pairing.address})")
+        return caps
+
+    @property
+    def supports_pairing(self) -> bool:
+        return True
+
+    @property
+    def is_paired(self) -> bool:
+        return self.pairing is not None
+
+    @property
+    def supports_remote_control(self) -> bool:
+        return self.pairing is not None
+
     @classmethod
     async def discover(cls) -> list[Camera]:
+        pairings = pairing_store.load_all(cls.storage_dir) if cls.storage_dir else {}
         mount = (
             DJI_MOUNT_PATH
             if (DJI_MOUNT_PATH.is_dir() and (DJI_MOUNT_PATH / MEDIA_DIR).is_dir())
             else None
         )
-        pairing = pairing_store.load(cls.storage_dir) if cls.storage_dir else None
 
-        if mount is None and pairing is None:
+        if not pairings and mount is None:
             return []
 
-        log.info(
-            "DJI Osmo 360 detected: usb=%s ble=%s", mount, pairing and pairing.address
-        )
-        return [cls(mount_path=mount, pairing=pairing)]
+        cameras: list[Camera] = []
+        if pairings:
+            # Heuristic: associate the single USB mount with the first pairing. Multiple
+            # DJIs over USB aren't supported (all Osmo 360s mount at the same path).
+            mount_attached = False
+            for info in pairings.values():
+                cameras.append(cls(
+                    mount_path=None if mount_attached else mount,
+                    pairing=info,
+                ))
+                mount_attached = True
+        else:
+            cameras.append(cls(mount_path=mount, pairing=None))
+
+        for c in cameras:
+            log.info("DJI Osmo 360 detected: %r", c)
+        return cameras
+
+    async def pair(self, storage_dir: Path) -> dict[str, Any]:
+        if self.pairing is not None:
+            pairing_store.clear(storage_dir, self.pairing.address)
+        info = await pair_new_camera(storage_dir)
+        return {
+            "status": "paired",
+            "address": info.address,
+            "device_id": f"0x{info.device_id:04x}",
+        }
+
+    async def unpair(self, storage_dir: Path) -> None:
+        if self.pairing is None:
+            return
+        pairing_store.clear(storage_dir, self.pairing.address)
+        self.pairing = None
 
     async def stop_recording(self) -> bool:
         return await self._record_control(start=False)

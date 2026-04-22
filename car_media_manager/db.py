@@ -9,14 +9,14 @@ import databases
 SCHEMA_MEDIA_FILES = """\
 CREATE TABLE IF NOT EXISTS media_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source TEXT NOT NULL,
+    vendor TEXT NOT NULL,
     original_filename TEXT NOT NULL,
     local_path TEXT NOT NULL,
     file_size INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     ingested_at TEXT,
     uploaded_at TEXT,
-    UNIQUE(source, original_filename, file_size)
+    UNIQUE(vendor, original_filename, file_size)
 )
 """
 
@@ -64,12 +64,12 @@ SQLITE_PRAGMAS = (
 @dataclass(frozen=True, slots=True)
 class MediaFile:
     id: int
-    source: str
+    vendor: str
     original_filename: str
     local_path: str
     file_size: int
     created_at: datetime
-    ingested_at: datetime
+    ingested_at: datetime | None
     uploaded_at: datetime | None
 
 
@@ -100,7 +100,7 @@ def _parse_dt(value: str | None) -> datetime | None:
 def _row_to_media_file(row: Any) -> MediaFile:
     return MediaFile(
         id=row["id"],
-        source=row["source"],
+        vendor=row["vendor"],
         original_filename=row["original_filename"],
         local_path=row["local_path"],
         file_size=row["file_size"],
@@ -133,6 +133,15 @@ class Database:
             await self._database.execute(pragma)
         for statement in SCHEMA_STATEMENTS:
             await self._database.execute(statement)
+        await self._migrate_source_to_vendor()
+
+    async def _migrate_source_to_vendor(self) -> None:
+        cols = await self._database.fetch_all("PRAGMA table_info(media_files)")
+        col_names = {c["name"] for c in cols}
+        if "source" in col_names and "vendor" not in col_names:
+            await self._database.execute(
+                "ALTER TABLE media_files RENAME COLUMN source TO vendor"
+            )
 
     async def disconnect(self) -> None:
         await self._database.disconnect()
@@ -140,19 +149,19 @@ class Database:
     async def is_ingested(
         self,
         *,
-        source: str,
+        vendor: str,
         original_filename: str,
         file_size: int,
     ) -> bool:
         row = await self._database.fetch_one(
             query=(
                 "SELECT 1 FROM media_files "
-                "WHERE source = :source "
+                "WHERE vendor = :vendor "
                 "AND original_filename = :original_filename "
                 "AND file_size = :file_size"
             ),
             values={
-                "source": source,
+                "vendor": vendor,
                 "original_filename": original_filename,
                 "file_size": file_size,
             },
@@ -162,7 +171,7 @@ class Database:
     async def insert_media_file(
         self,
         *,
-        source: str,
+        vendor: str,
         original_filename: str,
         local_path: str,
         file_size: int,
@@ -171,11 +180,11 @@ class Database:
         await self._database.execute(
             query=(
                 "INSERT INTO media_files "
-                "(source, original_filename, local_path, file_size, created_at) "
-                "VALUES (:source, :original_filename, :local_path, :file_size, :created_at)"
+                "(vendor, original_filename, local_path, file_size, created_at) "
+                "VALUES (:vendor, :original_filename, :local_path, :file_size, :created_at)"
             ),
             values={
-                "source": source,
+                "vendor": vendor,
                 "original_filename": original_filename,
                 "local_path": local_path,
                 "file_size": file_size,
@@ -185,12 +194,12 @@ class Database:
         row = await self._database.fetch_one(
             query=(
                 "SELECT * FROM media_files "
-                "WHERE source = :source "
+                "WHERE vendor = :vendor "
                 "AND original_filename = :original_filename "
                 "AND file_size = :file_size"
             ),
             values={
-                "source": source,
+                "vendor": vendor,
                 "original_filename": original_filename,
                 "file_size": file_size,
             },
@@ -398,7 +407,7 @@ class Database:
             query=(
                 "SELECT "
                 "    m.id AS media_file_id, "
-                "    m.source AS source, "
+                "    m.vendor AS vendor, "
                 "    m.original_filename AS original_filename, "
                 "    m.file_size AS file_size, "
                 "    COALESCE(SUM(p.size), 0) AS bytes_uploaded "
@@ -416,7 +425,7 @@ class Database:
             result.append(
                 {
                     "media_file_id": r["media_file_id"],
-                    "source": r["source"],
+                    "vendor": r["vendor"],
                     "original_filename": r["original_filename"],
                     "file_size": total,
                     "bytes_uploaded": done,
