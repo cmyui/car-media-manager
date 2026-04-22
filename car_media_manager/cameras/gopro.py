@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from pathlib import Path
@@ -8,6 +7,7 @@ from pathlib import Path
 import httpx
 
 from car_media_manager.cameras.base import Camera
+from car_media_manager.cameras.base import CameraVendor
 from car_media_manager.cameras.base import MediaFileInfo
 from car_media_manager.speed import ProgressCallback
 
@@ -29,39 +29,64 @@ USB_DEVICE_RE = re.compile(
 )
 
 
-def _gopro_usb_connected() -> bool:
+def _discover_gopro_usb_serials() -> list[str]:
+    serials: list[str] = []
     try:
-        lsusb = Path("/dev/bus/usb")
-        if not lsusb.exists():
-            return False
-        # Check /sys/bus/usb for vendor ID
         for device in Path("/sys/bus/usb/devices").iterdir():
             vendor_path = device / "idVendor"
-            if vendor_path.exists() and vendor_path.read_text().strip() == GOPRO_USB_VENDOR_ID:
-                return True
+            serial_path = device / "serial"
+            if not vendor_path.exists() or not serial_path.exists():
+                continue
+            if vendor_path.read_text().strip() != GOPRO_USB_VENDOR_ID:
+                continue
+            serials.append(serial_path.read_text().strip())
     except OSError:
         pass
-    return False
+    return serials
 
 
 class GoProCamera(Camera):
-    source_name = "gopro"
+    vendor = CameraVendor.GOPRO
     display_name = "GoPro"
 
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, *, transport: str, serial: str) -> None:
         self.base_url = base_url
+        self._transport = transport
+        self._serial = serial
         self._client = httpx.AsyncClient(base_url=base_url, timeout=API_TIMEOUT)
 
     def __repr__(self) -> str:
-        return f"GoProCamera({self.base_url})"
+        return f"GoProCamera({self._transport}={self._serial} @ {self.base_url})"
+
+    @property
+    def camera_id(self) -> str:
+        return self._serial
+
+    @property
+    def capabilities(self) -> list[str]:
+        return [self._transport.upper()]
+
+    @property
+    def supports_remote_control(self) -> bool:
+        return True
 
     @classmethod
-    async def discover(cls) -> list[Camera]:
+    async def discover(cls, *, storage_dir: Path) -> list[Camera]:
         cameras: list[Camera] = []
 
-        if _gopro_usb_connected():
-            cameras.append(cls(GOPRO_USB_BASE_URL))
-            log.info("GoPro found via USB")
+        # USB: one camera per GoPro serial. The hardcoded base URL only reaches
+        # the first camera's USB network interface — additional GoPros would
+        # need per-serial subnet discovery (Open GoPro: 172.2X.1YZ.51).
+        serials = _discover_gopro_usb_serials()
+        for serial in serials[:1]:
+            cameras.append(cls(GOPRO_USB_BASE_URL, transport="usb", serial=serial))
+            log.info("GoPro found via USB (serial=%s)", serial)
+        if len(serials) > 1:
+            log.warning(
+                "%d GoPro USB devices detected; only the first is reachable at %s",
+                len(serials),
+                GOPRO_USB_BASE_URL,
+            )
 
         # TODO: WiFi discovery via nmcli scan for GoPro SSID
         # For now, only USB is supported
@@ -127,7 +152,8 @@ class GoProCamera(Camera):
                 if resp.status_code != 200:
                     log.error(
                         "Download failed for %s: HTTP %d",
-                        file_info.name, resp.status_code,
+                        file_info.name,
+                        resp.status_code,
                     )
                     return False
                 with open(dest, "wb") as f:

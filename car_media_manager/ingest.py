@@ -23,13 +23,13 @@ async def ingest_file(
     storage_dir: Path,
 ) -> db.MediaFile | None:
     if await database.is_ingested(
-        source=camera.source_name,
+        vendor=camera.vendor,
         original_filename=file_info.name,
         file_size=file_info.size,
     ):
         return None
 
-    dest_dir = storage_dir / camera.source_name / datetime.now().strftime("%Y-%m-%d")
+    dest_dir = storage_dir / camera.vendor / datetime.now().strftime("%Y-%m-%d")
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / file_info.name
 
@@ -42,7 +42,7 @@ async def ingest_file(
             counter += 1
 
     record = await database.insert_media_file(
-        source=camera.source_name,
+        vendor=camera.vendor,
         original_filename=file_info.name,
         local_path=str(dest_path),
         file_size=file_info.size,
@@ -95,7 +95,7 @@ async def run_ingest_cycle(
             log.info("%s detected at %s", camera.display_name, camera)
 
             files = await camera.list_media()
-            log.info("Found %d files from %s", len(files), camera.source_name)
+            log.info("Found %d files from %s", len(files), camera.vendor)
 
             for file_info in files:
                 result = await ingest_file(

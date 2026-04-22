@@ -16,7 +16,12 @@ from car_media_manager.web import create_app
 log = logging.getLogger("car_media_manager")
 
 
-async def ingest_loop(*, settings: Settings, database: Database, registry: CameraRegistry) -> None:
+async def ingest_loop(
+    *,
+    settings: Settings,
+    database: Database,
+    registry: CameraRegistry,
+) -> None:
     while True:
         try:
             ingested = await ingest.run_ingest_cycle(
@@ -53,13 +58,13 @@ async def upload_loop(
 
 
 async def run() -> None:
-    settings = Settings(_env_file=".env")  # type: ignore[call-arg]
+    settings = Settings.model_validate({})
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
 
     database = Database(settings.db_path)
     await database.connect()
 
-    registry = CameraRegistry()
+    registry = CameraRegistry(storage_dir=settings.storage_dir)
     registry.register(GoProCamera)
     registry.register(DJIOsmoCamera)
 
@@ -68,7 +73,12 @@ async def run() -> None:
     log.info("Database: %s", settings.db_path.resolve())
 
     async with upload.s3_client_context(settings) as s3_client:
-        app = create_app(settings=settings, database=database, s3_client=s3_client, registry=registry)
+        app = create_app(
+            settings=settings,
+            database=database,
+            s3_client=s3_client,
+            registry=registry,
+        )
 
         config = uvicorn.Config(
             app,
