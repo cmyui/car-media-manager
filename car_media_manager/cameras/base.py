@@ -58,7 +58,7 @@ class Camera(abc.ABC):
 
     @classmethod
     @abc.abstractmethod
-    async def discover(cls) -> list[Camera]:
+    async def discover(cls, *, storage_dir: Path) -> list[Camera]:
         ...
 
     @abc.abstractmethod
@@ -84,7 +84,8 @@ class Camera(abc.ABC):
 
 
 class CameraRegistry:
-    def __init__(self) -> None:
+    def __init__(self, *, storage_dir: Path) -> None:
+        self._storage_dir = storage_dir
         self._types: list[type[Camera]] = []
 
     def register(self, cls: type[Camera]) -> None:
@@ -94,7 +95,7 @@ class CameraRegistry:
         cameras: list[Camera] = []
         for cls in self._types:
             try:
-                found = await cls.discover()
+                found = await cls.discover(storage_dir=self._storage_dir)
                 cameras.extend(found)
             except Exception:
                 log.exception("Discovery failed for %s", cls.__name__)

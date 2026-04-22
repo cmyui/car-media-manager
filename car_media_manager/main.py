@@ -64,9 +64,7 @@ async def run() -> None:
     database = Database(settings.db_path)
     await database.connect()
 
-    DJIOsmoCamera.storage_dir = settings.storage_dir
-
-    registry = CameraRegistry()
+    registry = CameraRegistry(storage_dir=settings.storage_dir)
     registry.register(GoProCamera)
     registry.register(DJIOsmoCamera)
 

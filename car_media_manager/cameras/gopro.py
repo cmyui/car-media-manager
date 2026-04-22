@@ -71,7 +71,7 @@ class GoProCamera(Camera):
         return True
 
     @classmethod
-    async def discover(cls) -> list[Camera]:
+    async def discover(cls, *, storage_dir: Path) -> list[Camera]:
         cameras: list[Camera] = []
 
         # USB: one camera per GoPro serial. The hardcoded base URL only reaches

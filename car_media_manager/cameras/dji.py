@@ -30,9 +30,6 @@ class DJIOsmoCamera(Camera):
     vendor = CameraVendor.DJI
     display_name = "DJI Osmo 360"
 
-    # Set at app startup before registry.discover_all() is called
-    storage_dir: Path | None = None
-
     def __init__(
         self,
         *,
@@ -78,8 +75,8 @@ class DJIOsmoCamera(Camera):
         return self.pairing is not None
 
     @classmethod
-    async def discover(cls) -> list[Camera]:
-        pairings = pairing_store.load_all(cls.storage_dir) if cls.storage_dir else {}
+    async def discover(cls, *, storage_dir: Path) -> list[Camera]:
+        pairings = pairing_store.load_all(storage_dir)
         mount = (
             DJI_MOUNT_PATH
             if (DJI_MOUNT_PATH.is_dir() and (DJI_MOUNT_PATH / MEDIA_DIR).is_dir())
