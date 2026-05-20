@@ -52,6 +52,19 @@ systemctl --user stop car-media-manager     # stop
 journalctl --user -u car-media-manager -f   # tail logs
 ```
 
+## Enable Pi Internet Over USB-C From macOS
+
+When the Pi is connected directly to a Mac over USB-C gadget networking, run this
+on the Mac to keep the Mac's own internet route on Wi-Fi while NATing Pi traffic
+out through the Mac:
+
+```bash
+./deploy/enable-mac-usb-internet-sharing.sh
+```
+
+The script configures the `Raspberry Pi USB Gadget` macOS service with a manual
+USB-side IP and enables a scoped PF NAT rule for the Pi USB subnet.
+
 ## Configuration
 
 All config via environment variables (prefix `CMM_`), loaded from `.env`:
