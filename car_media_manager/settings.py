@@ -5,7 +5,7 @@ from pydantic_settings import SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="CMM_")
+    model_config = SettingsConfigDict(env_prefix="CMM_", env_file=".env")
 
     storage_dir: Path
     db_path: Path

@@ -5,11 +5,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
-import aioboto3
-from botocore.config import Config as BotoConfig
+from aiobotocore.config import AioConfig
+from aiobotocore.session import get_session
 from botocore.exceptions import BotoCoreError
 from botocore.exceptions import ClientError
 from types_aiobotocore_s3 import S3Client
+from types_aiobotocore_s3.type_defs import CompletedPartTypeDef
 
 from car_media_manager import db
 from car_media_manager.settings import Settings
@@ -54,14 +55,14 @@ async def has_internet() -> bool:
 
 @asynccontextmanager
 async def s3_client_context(settings: Settings) -> AsyncIterator[S3Client]:
-    session = aioboto3.Session()
-    async with session.client(
+    session = get_session()
+    async with session.create_client(
         "s3",
         endpoint_url=settings.s3_endpoint_url,
         region_name=settings.s3_region_name,
         aws_access_key_id=settings.s3_access_key_id,
         aws_secret_access_key=settings.s3_secret_access_key,
-        config=BotoConfig(
+        config=AioConfig(
             retries={"max_attempts": 5, "mode": "adaptive"},
             connect_timeout=10,
             read_timeout=60,
@@ -91,29 +92,34 @@ async def _list_all_s3_parts(
     s3_upload_id: str,
 ) -> list[db.MultipartPart]:
     parts: list[db.MultipartPart] = []
-    marker: int | None = None
+    marker: int = 0
     while True:
-        kwargs: dict = {
-            "Bucket": bucket,
-            "Key": s3_key,
-            "UploadId": s3_upload_id,
-        }
-        if marker is not None:
-            kwargs["PartNumberMarker"] = marker
-        resp = await s3_client.list_parts(**kwargs)
+        resp = await s3_client.list_parts(
+            Bucket=bucket,
+            Key=s3_key,
+            UploadId=s3_upload_id,
+            PartNumberMarker=marker,
+        )
         for part in resp.get("Parts", []):
+            part_number = part.get("PartNumber")
+            etag = part.get("ETag")
+            size = part.get("Size")
+            if part_number is None or etag is None or size is None:
+                log.warning("Skipping malformed S3 part entry: %s", part)
+                continue
             parts.append(
                 db.MultipartPart(
-                    part_number=part["PartNumber"],
-                    etag=part["ETag"],
-                    size=part["Size"],
+                    part_number=part_number,
+                    etag=etag,
+                    size=size,
                 )
             )
         if not resp.get("IsTruncated"):
             break
-        marker = resp.get("NextPartNumberMarker")
-        if marker is None:
+        next_marker = resp.get("NextPartNumberMarker")
+        if next_marker is None:
             break
+        marker = next_marker
     return parts
 
 
@@ -126,7 +132,9 @@ async def _abort_upload(
 ) -> None:
     try:
         await s3_client.abort_multipart_upload(
-            Bucket=bucket, Key=s3_key, UploadId=s3_upload_id,
+            Bucket=bucket,
+            Key=s3_key,
+            UploadId=s3_upload_id,
         )
     except (BotoCoreError, ClientError):
         log.exception("Failed to abort multipart upload %s", s3_upload_id)
@@ -172,9 +180,7 @@ async def upload_file_resumable(
                 await database.delete_multipart_upload(record.id)
                 record = None
             else:
-                log.exception(
-                    "list_parts failed for %s", media_file.original_filename
-                )
+                log.exception("list_parts failed for %s", media_file.original_filename)
                 return False
         else:
             await database.replace_parts(record.id, s3_parts)
@@ -208,16 +214,21 @@ async def upload_file_resumable(
     if record is None:
         try:
             create_resp = await s3_client.create_multipart_upload(
-                Bucket=bucket, Key=s3_key,
+                Bucket=bucket,
+                Key=s3_key,
             )
         except (BotoCoreError, ClientError):
             log.exception("create_multipart_upload failed")
+            return False
+        upload_id = create_resp.get("UploadId")
+        if upload_id is None:
+            log.error("create_multipart_upload returned no UploadId")
             return False
         record = await database.create_multipart_upload(
             media_file_id=media_file.id,
             s3_bucket=bucket,
             s3_key=s3_key,
-            s3_upload_id=create_resp["UploadId"],
+            s3_upload_id=upload_id,
             part_size=MULTIPART_CHUNK_SIZE,
         )
         log.info("Started multipart upload %s for %s", record.s3_upload_id, s3_key)
@@ -229,7 +240,8 @@ async def upload_file_resumable(
     if total_parts > 10000:
         log.error(
             "File %s requires %d parts which exceeds S3's 10000 limit",
-            media_file.original_filename, total_parts,
+            media_file.original_filename,
+            total_parts,
         )
         return False
 
@@ -251,7 +263,8 @@ async def upload_file_resumable(
                 if not chunk:
                     log.error(
                         "Unexpected empty read for part %d of %s",
-                        part_num, media_file.original_filename,
+                        part_num,
+                        media_file.original_filename,
                     )
                     return False
 
@@ -262,7 +275,10 @@ async def upload_file_resumable(
                     PartNumber=part_num,
                     Body=chunk,
                 )
-                etag = part_resp["ETag"]
+                etag = part_resp.get("ETag")
+                if etag is None:
+                    log.error("upload_part returned no ETag for part %d", part_num)
+                    return False
                 chunk_size = len(chunk)
                 await database.record_part_uploaded(
                     multipart_upload_id=record.id,
@@ -272,11 +288,15 @@ async def upload_file_resumable(
                 )
                 upload_tracker.record(chunk_size)
                 completed_by_num[part_num] = db.MultipartPart(
-                    part_number=part_num, etag=etag, size=len(chunk),
+                    part_number=part_num,
+                    etag=etag,
+                    size=len(chunk),
                 )
                 log.debug(
                     "Uploaded part %d/%d of %s",
-                    part_num, total_parts, media_file.original_filename,
+                    part_num,
+                    total_parts,
+                    media_file.original_filename,
                 )
     except FileNotFoundError:
         log.error(
@@ -298,7 +318,7 @@ async def upload_file_resumable(
         )
         return False
 
-    parts_for_complete = [
+    parts_for_complete: list[CompletedPartTypeDef] = [
         {"PartNumber": num, "ETag": completed_by_num[num].etag}
         for num in sorted(completed_by_num)
     ]
@@ -346,11 +366,14 @@ async def run_upload_cycle(
 
         for media_file in pending:
             local = Path(media_file.local_path)
-            s3_key = f"{s3_prefix}/{media_file.source}/{local.parent.name}/{local.name}"
+            s3_key = f"{s3_prefix}/{media_file.vendor}/{local.parent.name}/{local.name}"
 
             log.info(
                 "Uploading %s -> s3://%s/%s (%d bytes)",
-                local.name, bucket, s3_key, media_file.file_size,
+                local.name,
+                bucket,
+                s3_key,
+                media_file.file_size,
             )
             if await upload_file_resumable(
                 s3_client=s3_client,
@@ -362,6 +385,10 @@ async def run_upload_cycle(
                 await database.mark_uploaded(media_file.id)
                 uploaded += 1
                 log.info("Uploaded %s", media_file.original_filename)
+                try:
+                    local.unlink(missing_ok=True)
+                except OSError:
+                    log.exception("Failed to delete local file %s", local)
             else:
                 log.warning(
                     "Failed to upload %s, will retry next cycle",

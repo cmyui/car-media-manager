@@ -48,7 +48,7 @@
         .progress-list { margin-bottom: 32px; display: flex; flex-direction: column; gap: 10px; }
         .progress-row { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 16px; }
         .progress-info { display: flex; align-items: baseline; gap: 10px; font-size: 0.85rem; margin-bottom: 8px; }
-        .progress-info .source-tag { background: #21262d; color: #8b949e; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .progress-info .vendor-tag { background: #21262d; color: #8b949e; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
         .progress-info .filename { color: #c9d1d9; font-weight: 500; flex: 1; }
         .progress-info .bytes { color: #6e7681; font-variant-numeric: tabular-nums; }
         .progress-info .percent { color: #58a6ff; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 45px; text-align: right; }
@@ -63,9 +63,9 @@
 
     <div class="cameras">
         {% for cam in detected_cameras %}
-        <div class="camera-badge" title="{{ cam.mount }}">
+        <div class="camera-badge" title="{{ cam.detail }}">
             <span class="dot online"></span>
-            {{ cam.display_name }}
+            {{ cam.display_name }}{% if cam.capabilities %} — {{ cam.capabilities | join(" + ") }}{% endif %}
         </div>
         {% endfor %}
         {% if not detected_cameras %}
@@ -79,6 +79,26 @@
             Internet
         </div>
     </div>
+
+    {% for cam in detected_cameras %}
+    {% if cam.supports_pairing or cam.supports_remote_control %}
+    <div class="actions">
+        <strong style="margin-right: 8px;">{{ cam.display_name }}:</strong>
+        {% if cam.supports_pairing %}
+        <button class="btn" onclick="cameraAction('{{ cam.vendor }}', '{{ cam.camera_id }}', 'pair', 'Pair')">
+            {{ "Re-pair" if cam.is_paired else "Pair" }}
+        </button>
+        {% endif %}
+        {% if cam.supports_remote_control %}
+        <button class="btn" onclick="cameraAction('{{ cam.vendor }}', '{{ cam.camera_id }}', 'start_recording', 'Start')">Start Recording</button>
+        <button class="btn" onclick="cameraAction('{{ cam.vendor }}', '{{ cam.camera_id }}', 'stop_recording', 'Stop')">Stop Recording</button>
+        {% elif cam.supports_pairing and not cam.is_paired %}
+        <span class="status-msg">Pair camera to enable record control</span>
+        {% endif %}
+        <span class="status-msg" id="cam-status-{{ cam.vendor }}-{{ cam.camera_id }}"></span>
+    </div>
+    {% endif %}
+    {% endfor %}
 
     <div class="grid">
         <div class="card">
@@ -100,8 +120,8 @@
             <div class="value yellow">{{ camera_remaining }}</div>
         </div>
         <div class="card">
-            <div class="label">Local Storage</div>
-            <div class="value blue">{{ storage_used_value }}</div>
+            <div class="label">Free Storage</div>
+            <div class="value blue">{{ storage_free_value }}</div>
             <div class="subvalue">of {{ storage_total_value }}</div>
         </div>
         <div class="card">
@@ -126,7 +146,7 @@
         {% for cp in active_copies %}
         <div class="progress-row">
             <div class="progress-info">
-                <span class="source-tag">{{ cp.source }}</span>
+                <span class="vendor-tag">{{ cp.vendor }}</span>
                 <span class="filename">{{ cp.original_filename }}</span>
                 <span class="bytes">{{ cp.bytes_copied | format_size }} / {{ cp.file_size | format_size }}</span>
                 <span class="percent">{{ "%.1f"|format(cp.percent) }}%</span>
@@ -147,7 +167,7 @@
         {% for up in active_uploads %}
         <div class="progress-row">
             <div class="progress-info">
-                <span class="source-tag">{{ up.source }}</span>
+                <span class="vendor-tag">{{ up.vendor }}</span>
                 <span class="filename">{{ up.original_filename }}</span>
                 <span class="bytes">{{ up.bytes_uploaded | format_size }} / {{ up.file_size | format_size }}</span>
                 <span class="percent">{{ "%.1f"|format(up.percent) }}%</span>
@@ -166,7 +186,7 @@
     <table>
         <thead>
             <tr>
-                <th>Source</th>
+                <th>Vendor</th>
                 <th>Filename</th>
                 <th>Size</th>
                 <th>Ingested</th>
@@ -177,7 +197,7 @@
         <tbody>
             {% for file in recent_files %}
             <tr>
-                <td>{{ file.source }}</td>
+                <td>{{ file.vendor }}</td>
                 <td>{{ file.original_filename }}</td>
                 <td>{{ file.file_size | format_size }}</td>
                 <td>{{ file.ingested_at.strftime('%Y-%m-%d %H:%M') if file.ingested_at else '-' }}</td>
@@ -233,6 +253,26 @@
                 status.textContent = 'Error: ' + e.message;
             }
             btn.disabled = false;
+        }
+
+        async function cameraAction(vendor, cameraId, action, verb) {
+            const status = document.getElementById(`cam-status-${vendor}-${cameraId}`);
+            if (action === 'pair') {
+                status.textContent = 'Scanning — accept the pairing prompt on the camera screen';
+            } else {
+                status.textContent = verb + '...';
+            }
+            try {
+                const res = await fetch(`/api/cameras/${vendor}/${cameraId}/${action}`, { method: 'POST' });
+                const data = await res.json();
+                if (data.status === 'error') {
+                    status.textContent = 'Error: ' + data.error;
+                } else {
+                    status.textContent = verb + ' ' + data.status;
+                }
+            } catch (e) {
+                status.textContent = 'Error: ' + e.message;
+            }
         }
     </script>
 </body>
