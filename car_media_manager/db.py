@@ -406,10 +406,15 @@ class Database:
         rows = await self._database.fetch_all(
             query=(
                 "SELECT "
+                "    u.id AS multipart_upload_id, "
+                "    u.part_size AS part_size, "
+                "    u.started_at AS started_at, "
                 "    m.id AS media_file_id, "
                 "    m.vendor AS vendor, "
                 "    m.original_filename AS original_filename, "
                 "    m.file_size AS file_size, "
+                "    COUNT(p.part_number) AS completed_parts, "
+                "    MAX(p.uploaded_at) AS last_part_at, "
                 "    COALESCE(SUM(p.size), 0) AS bytes_uploaded "
                 "FROM multipart_uploads u "
                 "JOIN media_files m ON m.id = u.media_file_id "
@@ -425,9 +430,14 @@ class Database:
             result.append(
                 {
                     "media_file_id": r["media_file_id"],
+                    "multipart_upload_id": r["multipart_upload_id"],
                     "vendor": r["vendor"],
                     "original_filename": r["original_filename"],
                     "file_size": total,
+                    "part_size": r["part_size"],
+                    "started_at": r["started_at"],
+                    "completed_parts": r["completed_parts"],
+                    "last_part_at": r["last_part_at"],
                     "bytes_uploaded": done,
                     "percent": (done / total * 100) if total else 0.0,
                 }
