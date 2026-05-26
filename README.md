@@ -84,6 +84,7 @@ All config via environment variables (prefix `CMM_`), loaded from `.env`:
 | `CMM_S3_PREFIX` | Key prefix in bucket | `car-footage` |
 | `CMM_INGEST_INTERVAL_SECONDS` | Seconds between ingest cycles | `300` |
 | `CMM_UPLOAD_INTERVAL_SECONDS` | Seconds between upload cycles | `60` |
+| `CMM_INGEST_FREE_SPACE_RESERVE_BYTES` | Free-space reserve before starting camera copies | `1073741824` |
 
 ## Camera support
 

@@ -20,3 +20,4 @@ class Settings(BaseSettings):
 
     ingest_interval_seconds: int = 300
     upload_interval_seconds: int = 60
+    ingest_free_space_reserve_bytes: int = 1073741824

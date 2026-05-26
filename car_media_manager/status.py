@@ -163,6 +163,8 @@ async def build_status(
     )
 
     detected_cameras = [_camera_view(c) for c in found]
+    free_space_reserve_bytes = getattr(settings, "ingest_free_space_reserve_bytes", 0)
+    is_below_reserve = disk.free < free_space_reserve_bytes
     ingest_speed = ingest_tracker.bytes_per_second()
     upload_speed = upload_tracker.bytes_per_second()
     if upload_speed <= 0:
@@ -284,6 +286,12 @@ async def build_status(
             "total": disk.total,
             "free_display": format_size(disk.free),
             "total_display": format_size(disk.total),
+        },
+        "storage": {
+            "free_space_reserve_bytes": free_space_reserve_bytes,
+            "free_space_reserve_display": format_size(free_space_reserve_bytes),
+            "is_below_reserve": is_below_reserve,
+            "block_message": "Waiting for upload to free space" if is_below_reserve else None,
         },
         "stats": stats,
         "pending_upload": {

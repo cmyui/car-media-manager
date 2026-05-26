@@ -41,6 +41,16 @@ def test_ingest_action_noops_without_cameras() -> None:
     assert decision.status == "noop"
 
 
+def test_ingest_action_blocks_low_storage() -> None:
+    decision = decide_ingest_action(
+        status=_status(storage={"is_below_reserve": True}),
+        is_running=False,
+    )
+
+    assert decision.http_status == 400
+    assert decision.status == "blocked"
+
+
 def test_upload_action_blocks_missing_s3_config() -> None:
     decision = decide_upload_action(
         settings=_settings(s3_bucket_name=""),

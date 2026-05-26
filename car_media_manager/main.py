@@ -28,6 +28,7 @@ async def ingest_loop(
                 database=database,
                 storage_dir=settings.storage_dir,
                 registry=registry,
+                free_space_reserve_bytes=settings.ingest_free_space_reserve_bytes,
             )
             if ingested:
                 log.info("Ingest cycle: %d new files", ingested)
