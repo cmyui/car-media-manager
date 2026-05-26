@@ -15,6 +15,10 @@ log = logging.getLogger(__name__)
 _ingest_lock = asyncio.Lock()
 
 
+def is_running() -> bool:
+    return _ingest_lock.locked()
+
+
 async def ingest_file(
     *,
     database: db.Database,
