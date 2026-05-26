@@ -162,6 +162,7 @@ async def build_status(
         database.list_active_copies(),
     )
 
+    scan_started_at = datetime.now(tz=timezone.utc)
     detected_cameras = [_camera_view(c) for c in found]
     free_space_reserve_bytes = getattr(settings, "ingest_free_space_reserve_bytes", 0)
     is_below_reserve = disk.free < free_space_reserve_bytes
@@ -180,16 +181,29 @@ async def build_status(
 
     camera_remaining_bytes = 0
     camera_remaining_files = 0
-    for cam in found:
+    for cam, camera_view in zip(found, detected_cameras):
+        camera_remaining_for_cam_bytes = 0
+        camera_remaining_for_cam_files = 0
         try:
             media = await cam.list_media()
         except Exception:
-            continue
+            media = []
         for file_info in media:
             key = f"{cam.vendor}:{file_info.name}"
             if key not in ingested_names:
-                camera_remaining_bytes += file_info.size
-                camera_remaining_files += 1
+                camera_remaining_for_cam_bytes += file_info.size
+                camera_remaining_for_cam_files += 1
+        camera_remaining_bytes += camera_remaining_for_cam_bytes
+        camera_remaining_files += camera_remaining_for_cam_files
+        camera_view.update(
+            {
+                "remaining_files": camera_remaining_for_cam_files,
+                "remaining_bytes": camera_remaining_for_cam_bytes,
+                "remaining_bytes_display": format_size(camera_remaining_for_cam_bytes),
+                "last_scan_at": scan_started_at.isoformat(),
+                "last_scan_display": _datetime_display(scan_started_at),
+            }
+        )
 
     copy_progress: list[dict[str, Any]] = []
     ingest_remaining = camera_remaining_bytes
@@ -277,6 +291,8 @@ async def build_status(
     upload_estimating = (
         pending_upload_bytes > 0 and upload_speed <= 0 and active_upload_state is not None
     )
+    copying_bytes = sum(item["file_size"] for item in copy_progress)
+    uploaded_bytes = stats["total_bytes"] - stats["pending_bytes"]
 
     return {
         "cameras": detected_cameras,
@@ -304,6 +320,28 @@ async def build_status(
             "bytes": camera_remaining_bytes,
             "bytes_display": format_size(camera_remaining_bytes),
         },
+        "pipeline": {
+            "on_camera": {
+                "files": camera_remaining_files,
+                "bytes": camera_remaining_bytes,
+                "bytes_display": format_size(camera_remaining_bytes),
+            },
+            "copying": {
+                "files": len(copy_progress),
+                "bytes": copying_bytes,
+                "bytes_display": format_size(copying_bytes),
+            },
+            "queued": {
+                "files": pending_upload_files,
+                "bytes": pending_upload_bytes,
+                "bytes_display": format_size(pending_upload_bytes),
+            },
+            "uploaded": {
+                "files": stats["uploaded_files"],
+                "bytes": uploaded_bytes,
+                "bytes_display": format_size(uploaded_bytes),
+            },
+        },
         "active_copies": copy_progress,
         "active_uploads": upload_progress,
         "recent_files": [
@@ -326,6 +364,6 @@ async def build_status(
         },
         "last_message": runtime.get_message(),
         "display": {
-            "total_uploaded_bytes": format_size(stats["total_bytes"] - stats["pending_bytes"]),
+            "total_uploaded_bytes": format_size(uploaded_bytes),
         },
     }

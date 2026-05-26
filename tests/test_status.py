@@ -124,10 +124,15 @@ async def test_build_status_shapes_dashboard_data(tmp_path: Path) -> None:
 
     assert status["has_internet"] is True
     assert status["cameras"][0]["display_name"] == "DJI Osmo 360"
+    assert status["cameras"][0]["remaining_files"] == 1
+    assert status["cameras"][0]["remaining_bytes"] == 200
     assert status["pending_upload"]["files"] == 2
     assert status["pending_upload"]["bytes"] == 900
     assert status["camera_remaining"]["files"] == 1
     assert status["camera_remaining"]["bytes"] == 200
+    assert status["pipeline"]["on_camera"]["bytes"] == 200
+    assert status["pipeline"]["copying"]["bytes"] == 400
+    assert status["pipeline"]["queued"]["bytes"] == 900
     assert status["active_copies"][0]["bytes_copied"] == 100
     assert status["active_uploads"][0]["bytes_uploaded"] == 200
     assert status["recent_files"][0]["state"] == "uploading"

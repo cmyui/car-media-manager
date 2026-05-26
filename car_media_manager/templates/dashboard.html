@@ -18,12 +18,32 @@
         .card .value.yellow { color: #d29922; }
         .card .value.blue { color: #58a6ff; }
         .card .subvalue { font-size: 0.75rem; color: #6e7681; margin-top: 2px; }
+        .card.critical { border-color: #f85149; }
+        .card.critical .value { color: #f85149; }
+        .metric-row { display: flex; justify-content: space-between; gap: 16px; margin-top: 8px; font-size: 0.9rem; }
+        .metric-row span:first-child { color: #8b949e; }
+        .metric-row strong { font-variant-numeric: tabular-nums; }
+        .metric-row .blue { color: #58a6ff; }
+        .metric-row .green { color: #3fb950; }
+        .metric-row .yellow { color: #d29922; }
 
-        .cameras { display: flex; gap: 12px; margin-bottom: 32px; flex-wrap: wrap; }
+        .pipeline { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 12px; margin-bottom: 32px; }
+        .pipeline-step { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; }
+        .pipeline-step .label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em; }
+        .pipeline-step .value { font-size: 1.1rem; font-weight: 600; margin-top: 4px; color: #c9d1d9; }
+        .pipeline-step .subvalue { font-size: 0.75rem; color: #6e7681; margin-top: 2px; }
+
+        .cameras { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
         .camera-badge { display: flex; align-items: center; gap: 8px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 8px 14px; font-size: 0.85rem; }
         .camera-badge .dot { width: 8px; height: 8px; border-radius: 50%; }
         .camera-badge .dot.online { background: #3fb950; }
         .camera-badge .dot.offline { background: #484f58; }
+        .camera-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-bottom: 32px; }
+        .camera-detail { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; font-size: 0.85rem; }
+        .camera-detail strong { display: block; margin-bottom: 8px; }
+        .camera-detail .detail-row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; }
+        .camera-detail .detail-row span:first-child { color: #8b949e; }
+        .camera-detail .detail-row span:last-child { text-align: right; color: #c9d1d9; overflow-wrap: anywhere; }
 
         .actions { margin-bottom: 32px; }
         .btn { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
@@ -80,6 +100,18 @@
         </div>
     </div>
 
+    <div class="camera-details" id="camera-details">
+        {% for cam in detected_cameras %}
+        <div class="camera-detail">
+            <strong>{{ cam.display_name }}</strong>
+            <div class="detail-row"><span>Source</span><span>{{ cam.detail }}</span></div>
+            <div class="detail-row"><span>Remaining</span><span>{{ cam.remaining_files }} files / {{ cam.remaining_bytes_display }}</span></div>
+            <div class="detail-row"><span>Capabilities</span><span>{{ cam.capabilities | join(" + ") if cam.capabilities else "-" }}</span></div>
+            <div class="detail-row"><span>Last scan</span><span>{{ cam.last_scan_display }}</span></div>
+        </div>
+        {% endfor %}
+    </div>
+
     <div id="camera-actions">
         {% for cam in detected_cameras %}
         {% if cam.supports_pairing or cam.supports_remote_control %}
@@ -102,6 +134,29 @@
         {% endfor %}
     </div>
 
+    <div class="pipeline" id="pipeline">
+        <div class="pipeline-step">
+            <div class="label">On Camera</div>
+            <div class="value" id="pipeline-camera">{{ status.pipeline.on_camera.bytes_display }}</div>
+            <div class="subvalue" id="pipeline-camera-files">{{ status.pipeline.on_camera.files }} files</div>
+        </div>
+        <div class="pipeline-step">
+            <div class="label">Copying</div>
+            <div class="value" id="pipeline-copying">{{ status.pipeline.copying.bytes_display }}</div>
+            <div class="subvalue" id="pipeline-copying-files">{{ status.pipeline.copying.files }} files</div>
+        </div>
+        <div class="pipeline-step">
+            <div class="label">Queued for Cloud</div>
+            <div class="value" id="pipeline-queued">{{ status.pipeline.queued.bytes_display }}</div>
+            <div class="subvalue" id="pipeline-queued-files">{{ status.pipeline.queued.files }} files</div>
+        </div>
+        <div class="pipeline-step">
+            <div class="label">Uploaded</div>
+            <div class="value" id="pipeline-uploaded">{{ status.pipeline.uploaded.bytes_display }}</div>
+            <div class="subvalue" id="pipeline-uploaded-files">{{ status.pipeline.uploaded.files }} files</div>
+        </div>
+    </div>
+
     <div class="grid">
         <div class="card">
             <div class="label">Total Files</div>
@@ -121,18 +176,21 @@
             <div class="label">On Camera</div>
             <div class="value yellow" id="camera-remaining">{{ camera_remaining }}</div>
         </div>
-        <div class="card">
+        <div class="card{% if status.storage.is_below_reserve %} critical{% endif %}" id="storage-card">
             <div class="label">Free Storage</div>
             <div class="value blue" id="storage-free">{{ storage_free_value }}</div>
-            <div class="subvalue">of <span id="storage-total">{{ storage_total_value }}</span></div>
+            <div class="subvalue">of <span id="storage-total">{{ storage_total_value }}</span> · reserve <span id="storage-reserve">{{ status.storage.free_space_reserve_display }}</span></div>
         </div>
         <div class="card">
             <div class="label">Speeds</div>
-            <div class="value blue" id="speeds-value" style="font-size: 1.2rem">&#x2B07; {{ ingest_speed }} &#x2B06; {{ upload_speed }}</div>
+            <div class="metric-row"><span>Camera -> Pi</span><strong class="blue" id="ingest-speed">{{ ingest_speed }}</strong></div>
+            <div class="metric-row"><span>Pi -> Cloud</span><strong class="blue" id="upload-speed">{{ upload_speed }}</strong></div>
         </div>
         <div class="card">
             <div class="label">ETA</div>
-            <div class="value green" id="eta-value">{{ global_eta }}</div>
+            <div class="metric-row"><span>Copy</span><strong class="green" id="ingest-eta">{{ status.etas.ingest_display }}</strong></div>
+            <div class="metric-row"><span>Cloud</span><strong class="green" id="upload-eta">{{ status.etas.upload_display }}</strong></div>
+            <div class="metric-row"><span>Overall</span><strong class="green" id="overall-eta">{{ global_eta }}</strong></div>
         </div>
     </div>
 
@@ -290,6 +348,30 @@
                 .join('');
         }
 
+        function renderCameraDetails(status) {
+            const root = document.getElementById('camera-details');
+            root.innerHTML = status.cameras.map((cam) => `
+                <div class="camera-detail">
+                    <strong>${escapeHtml(cam.display_name)}</strong>
+                    <div class="detail-row"><span>Source</span><span>${escapeHtml(cam.detail)}</span></div>
+                    <div class="detail-row"><span>Remaining</span><span>${escapeHtml(cam.remaining_files)} files / ${escapeHtml(cam.remaining_bytes_display)}</span></div>
+                    <div class="detail-row"><span>Capabilities</span><span>${cam.capabilities.length ? escapeHtml(cam.capabilities.join(' + ')) : '-'}</span></div>
+                    <div class="detail-row"><span>Last scan</span><span>${escapeHtml(cam.last_scan_display)}</span></div>
+                </div>
+            `).join('');
+        }
+
+        function renderPipeline(status) {
+            setText('pipeline-camera', status.pipeline.on_camera.bytes_display);
+            setText('pipeline-camera-files', `${status.pipeline.on_camera.files} files`);
+            setText('pipeline-copying', status.pipeline.copying.bytes_display);
+            setText('pipeline-copying-files', `${status.pipeline.copying.files} files`);
+            setText('pipeline-queued', status.pipeline.queued.bytes_display);
+            setText('pipeline-queued-files', `${status.pipeline.queued.files} files`);
+            setText('pipeline-uploaded', status.pipeline.uploaded.bytes_display);
+            setText('pipeline-uploaded-files', `${status.pipeline.uploaded.files} files`);
+        }
+
         function renderProgressRow(item, kind) {
             const done = kind === 'copy' ? item.bytes_copied_display : item.bytes_uploaded_display;
             const partStatus = item.part_status ? `<span class="eta">${escapeHtml(item.part_status)}</span>` : '';
@@ -339,6 +421,8 @@
         function applyStatus(status) {
             renderCameras(status);
             renderCameraActions(status);
+            renderCameraDetails(status);
+            renderPipeline(status);
             setText('total-files', status.stats.total_files);
             setText('uploaded-files', status.stats.uploaded_files);
             setText('uploaded-bytes', status.display.total_uploaded_bytes);
@@ -347,8 +431,13 @@
             setText('camera-remaining', status.camera_remaining.bytes_display);
             setText('storage-free', status.disk.free_display);
             setText('storage-total', status.disk.total_display);
-            setText('speeds-value', `⬇ ${status.speeds.ingest_display} ⬆ ${status.speeds.upload_display}`);
-            setText('eta-value', status.etas.overall_display);
+            setText('storage-reserve', status.storage.free_space_reserve_display);
+            document.getElementById('storage-card').classList.toggle('critical', status.storage.is_below_reserve);
+            setText('ingest-speed', status.speeds.ingest_display);
+            setText('upload-speed', status.speeds.upload_display);
+            setText('ingest-eta', status.etas.ingest_display);
+            setText('upload-eta', status.etas.upload_display);
+            setText('overall-eta', status.etas.overall_display);
             renderProgress('copy-section', 'copy-list', status.active_copies, 'copy');
             renderProgress('upload-section', 'upload-list', status.active_uploads, 'upload');
             renderFiles(status.recent_files);
