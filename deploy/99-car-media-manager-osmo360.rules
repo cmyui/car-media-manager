@@ -1,0 +1,2 @@
+# Mount DJI Osmo 360 USB mass-storage media for Car Media Manager.
+ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="Osmo360", ENV{ID_FS_TYPE}=="exfat", TAG+="systemd", ENV{SYSTEMD_WANTS}+="media-pi-Osmo360.mount"

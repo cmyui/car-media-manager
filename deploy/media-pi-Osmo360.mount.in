@@ -1,0 +1,14 @@
+[Unit]
+Description=DJI Osmo 360 media
+BindsTo=dev-disk-by\x2dlabel-Osmo360.device
+After=dev-disk-by\x2dlabel-Osmo360.device
+
+[Mount]
+What=/dev/disk/by-label/Osmo360
+Where=/media/pi/Osmo360
+Type=exfat
+Options=ro,uid=@CMM_UID@,gid=@CMM_GID@,umask=022,iocharset=utf8,errors=remount-ro
+TimeoutSec=10
+
+[Install]
+WantedBy=multi-user.target
