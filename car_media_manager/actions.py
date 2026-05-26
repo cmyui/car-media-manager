@@ -35,6 +35,13 @@ def decide_ingest_action(*, status: dict[str, Any], is_running: bool) -> ActionD
             status="already_running",
             message="Ingest is already running",
         )
+    storage = status.get("storage") or {}
+    if storage.get("is_below_reserve"):
+        return ActionDecision(
+            http_status=400,
+            status="blocked",
+            message="Waiting for upload to free space",
+        )
     if not status["cameras"]:
         return ActionDecision(
             http_status=200,

@@ -1,10 +1,12 @@
 import asyncio
 import logging
+import shutil
 from datetime import datetime
 from datetime import timezone
 from pathlib import Path
 
 from car_media_manager import db
+from car_media_manager import runtime
 from car_media_manager.cameras.base import Camera
 from car_media_manager.cameras.base import CameraRegistry
 from car_media_manager.cameras.base import MediaFileInfo
@@ -81,6 +83,7 @@ async def run_ingest_cycle(
     database: db.Database,
     storage_dir: Path,
     registry: CameraRegistry,
+    free_space_reserve_bytes: int = 0,
 ) -> int:
     if _ingest_lock.locked():
         log.debug("Ingest cycle already in progress, skipping")
@@ -102,6 +105,25 @@ async def run_ingest_cycle(
             log.info("Found %d files from %s", len(files), camera.vendor)
 
             for file_info in files:
+                disk = await asyncio.to_thread(shutil.disk_usage, storage_dir)
+                required = file_info.size + free_space_reserve_bytes
+                if disk.free < required:
+                    message = "Waiting for upload to free space"
+                    runtime.set_message(
+                        level="warning",
+                        code="low_storage",
+                        message=message,
+                    )
+                    log.warning(
+                        "%s before ingesting %s: need %d bytes, have %d bytes",
+                        message,
+                        file_info.name,
+                        required,
+                        disk.free,
+                    )
+                    return ingested
+
+                runtime.clear_message(code="low_storage")
                 result = await ingest_file(
                     database=database,
                     camera=camera,

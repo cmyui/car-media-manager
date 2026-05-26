@@ -88,6 +88,7 @@ def create_app(
             database=database,
             storage_dir=settings.storage_dir,
             registry=registry,
+            free_space_reserve_bytes=settings.ingest_free_space_reserve_bytes,
         ))
         runtime.clear_message()
         return JSONResponse(status_code=decision.http_status, content=decision.as_dict())
