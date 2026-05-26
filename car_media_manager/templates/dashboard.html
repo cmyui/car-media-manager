@@ -148,10 +148,10 @@
             <div class="progress-info">
                 <span class="vendor-tag">{{ cp.vendor }}</span>
                 <span class="filename">{{ cp.original_filename }}</span>
-                <span class="bytes">{{ cp.bytes_copied | format_size }} / {{ cp.file_size | format_size }}</span>
+                <span class="bytes">{{ cp.bytes_copied_display }} / {{ cp.file_size_display }}</span>
                 <span class="percent">{{ "%.1f"|format(cp.percent) }}%</span>
-                <span class="speed">{{ cp.speed }}</span>
-                <span class="eta">ETA {{ cp.eta }}</span>
+                <span class="speed">{{ cp.speed_display }}</span>
+                <span class="eta">ETA {{ cp.eta_display }}</span>
             </div>
             <div class="progress-bar">
                 <div class="progress-fill" style="width: {{ cp.percent }}%"></div>
@@ -169,10 +169,10 @@
             <div class="progress-info">
                 <span class="vendor-tag">{{ up.vendor }}</span>
                 <span class="filename">{{ up.original_filename }}</span>
-                <span class="bytes">{{ up.bytes_uploaded | format_size }} / {{ up.file_size | format_size }}</span>
+                <span class="bytes">{{ up.bytes_uploaded_display }} / {{ up.file_size_display }}</span>
                 <span class="percent">{{ "%.1f"|format(up.percent) }}%</span>
-                <span class="speed">{{ up.speed }}</span>
-                <span class="eta">ETA {{ up.eta }}</span>
+                <span class="speed">{{ up.speed_display }}</span>
+                <span class="eta">ETA {{ up.eta_display }}</span>
             </div>
             <div class="progress-bar">
                 <div class="progress-fill" style="width: {{ up.percent }}%"></div>
@@ -199,18 +199,10 @@
             <tr>
                 <td>{{ file.vendor }}</td>
                 <td>{{ file.original_filename }}</td>
-                <td>{{ file.file_size | format_size }}</td>
-                <td>{{ file.ingested_at.strftime('%Y-%m-%d %H:%M') if file.ingested_at else '-' }}</td>
-                <td>{{ file.uploaded_at.strftime('%Y-%m-%d %H:%M') if file.uploaded_at else '-' }}</td>
-                {% if file.uploaded_at %}
-                <td class="uploaded">Uploaded</td>
-                {% elif not file.ingested_at %}
-                <td class="copying">Copying...</td>
-                {% elif file.id in uploading_file_ids %}
-                <td class="uploading">Uploading...</td>
-                {% else %}
-                <td class="pending">Awaiting Upload</td>
-                {% endif %}
+                <td>{{ file.file_size_display }}</td>
+                <td>{{ file.ingested_at_display }}</td>
+                <td>{{ file.uploaded_at_display }}</td>
+                <td class="{{ file.state }}">{{ file.status_label }}</td>
             </tr>
             {% endfor %}
             {% if not recent_files %}
@@ -231,8 +223,10 @@
             try {
                 const res = await fetch('/api/ingest', { method: 'POST' });
                 const data = await res.json();
-                status.textContent = 'Ingest started';
-                setTimeout(() => location.reload(), 3000);
+                status.textContent = data.message || data.status;
+                if (res.status === 202) {
+                    setTimeout(() => location.reload(), 3000);
+                }
             } catch (e) {
                 status.textContent = 'Error: ' + e.message;
             }
@@ -247,8 +241,10 @@
             try {
                 const res = await fetch('/api/upload', { method: 'POST' });
                 const data = await res.json();
-                status.textContent = 'Upload started';
-                setTimeout(() => location.reload(), 3000);
+                status.textContent = data.message || data.status;
+                if (res.status === 202) {
+                    setTimeout(() => location.reload(), 3000);
+                }
             } catch (e) {
                 status.textContent = 'Error: ' + e.message;
             }

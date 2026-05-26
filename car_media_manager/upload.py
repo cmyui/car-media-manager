@@ -27,6 +27,10 @@ MULTIPART_THRESHOLD = 8 * 1024 * 1024
 _upload_lock = asyncio.Lock()
 
 
+def is_running() -> bool:
+    return _upload_lock.locked()
+
+
 async def has_internet() -> bool:
     try:
         proc = await asyncio.create_subprocess_exec(
