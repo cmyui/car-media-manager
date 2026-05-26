@@ -173,6 +173,7 @@
                 <span class="percent">{{ "%.1f"|format(up.percent) }}%</span>
                 <span class="speed">{{ up.speed_display }}</span>
                 <span class="eta">ETA {{ up.eta_display }}</span>
+                {% if up.part_status %}<span class="eta">{{ up.part_status }}</span>{% endif %}
             </div>
             <div class="progress-bar">
                 <div class="progress-fill" style="width: {{ up.percent }}%"></div>

@@ -1,9 +1,12 @@
 import asyncio
 import logging
 import math
+import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator
+from typing import Any
 
 from aiobotocore.config import AioConfig
 from aiobotocore.session import get_session
@@ -21,14 +24,75 @@ log = logging.getLogger(__name__)
 CONNECTIVITY_CHECK_HOST = "1.1.1.1"
 CONNECTIVITY_CHECK_TIMEOUT_SECONDS = 3
 
-MULTIPART_CHUNK_SIZE = 8 * 1024 * 1024
-MULTIPART_THRESHOLD = 8 * 1024 * 1024
+MULTIPART_CHUNK_SIZE = 5 * 1024 * 1024
+MULTIPART_THRESHOLD = 5 * 1024 * 1024
 
 _upload_lock = asyncio.Lock()
+_active_upload: "ActiveUploadState | None" = None
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveUploadState:
+    media_file_id: int
+    vendor: str
+    original_filename: str
+    file_size: int
+    part_number: int
+    total_parts: int
+    current_part_size: int
+    confirmed_bytes: int
+    part_started_at: float
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "media_file_id": self.media_file_id,
+            "vendor": self.vendor,
+            "original_filename": self.original_filename,
+            "file_size": self.file_size,
+            "part_number": self.part_number,
+            "total_parts": self.total_parts,
+            "current_part_size": self.current_part_size,
+            "confirmed_bytes": self.confirmed_bytes,
+            "part_elapsed_seconds": max(time.monotonic() - self.part_started_at, 0.0),
+        }
 
 
 def is_running() -> bool:
     return _upload_lock.locked()
+
+
+def get_active_upload() -> dict[str, Any] | None:
+    if _active_upload is None:
+        return None
+    return _active_upload.as_dict()
+
+
+def _set_active_upload(
+    *,
+    media_file: db.MediaFile,
+    part_number: int,
+    total_parts: int,
+    current_part_size: int,
+    confirmed_bytes: int,
+) -> None:
+    global _active_upload
+    _active_upload = ActiveUploadState(
+        media_file_id=media_file.id,
+        vendor=media_file.vendor,
+        original_filename=media_file.original_filename,
+        file_size=media_file.file_size,
+        part_number=part_number,
+        total_parts=total_parts,
+        current_part_size=current_part_size,
+        confirmed_bytes=confirmed_bytes,
+        part_started_at=time.monotonic(),
+    )
+
+
+def _clear_active_upload(media_file_id: int) -> None:
+    global _active_upload
+    if _active_upload is None or _active_upload.media_file_id == media_file_id:
+        _active_upload = None
 
 
 async def has_internet() -> bool:
@@ -154,6 +218,13 @@ async def upload_file_resumable(
 ) -> bool:
     if media_file.file_size < MULTIPART_THRESHOLD:
         try:
+            _set_active_upload(
+                media_file=media_file,
+                part_number=1,
+                total_parts=1,
+                current_part_size=media_file.file_size,
+                confirmed_bytes=0,
+            )
             await _put_object_single(
                 s3_client=s3_client,
                 bucket=bucket,
@@ -272,6 +343,14 @@ async def upload_file_resumable(
                     )
                     return False
 
+                confirmed_bytes = sum(p.size for p in completed_by_num.values())
+                _set_active_upload(
+                    media_file=media_file,
+                    part_number=part_num,
+                    total_parts=total_parts,
+                    current_part_size=len(chunk),
+                    confirmed_bytes=confirmed_bytes,
+                )
                 part_resp = await s3_client.upload_part(
                     Bucket=record.s3_bucket,
                     Key=record.s3_key,
@@ -379,13 +458,18 @@ async def run_upload_cycle(
                 s3_key,
                 media_file.file_size,
             )
-            if await upload_file_resumable(
-                s3_client=s3_client,
-                database=database,
-                media_file=media_file,
-                bucket=bucket,
-                s3_key=s3_key,
-            ):
+            try:
+                uploaded_ok = await upload_file_resumable(
+                    s3_client=s3_client,
+                    database=database,
+                    media_file=media_file,
+                    bucket=bucket,
+                    s3_key=s3_key,
+                )
+            finally:
+                _clear_active_upload(media_file.id)
+
+            if uploaded_ok:
                 await database.mark_uploaded(media_file.id)
                 uploaded += 1
                 log.info("Uploaded %s", media_file.original_filename)
