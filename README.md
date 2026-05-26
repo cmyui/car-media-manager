@@ -43,7 +43,9 @@ Open `http://localhost:8000` for the dashboard.
 ```
 
 This installs and enables the service so it starts on boot and restarts on
-failure. Common operations:
+failure. It also installs a udev-triggered systemd mount for DJI Osmo 360 USB
+storage labeled `Osmo360`, mounted read-only at `/media/pi/Osmo360`. Common
+operations:
 
 ```bash
 systemctl --user status car-media-manager   # check status
