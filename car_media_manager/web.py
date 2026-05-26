@@ -1,12 +1,16 @@
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
 import jinja2
 from fastapi import FastAPI
 from fastapi import HTTPException
+from fastapi import Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
+from fastapi.responses import StreamingResponse
 from types_aiobotocore_s3 import S3Client
 
 from car_media_manager import actions
@@ -20,6 +24,11 @@ from car_media_manager.cameras.base import CameraVendor
 from car_media_manager.settings import Settings
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+
+def status_sse_event(status: dict[str, Any]) -> str:
+    payload = json.dumps(jsonable_encoder(status), separators=(",", ":"))
+    return f"event: status\ndata: {payload}\n\n"
 
 
 def create_app(
@@ -123,6 +132,22 @@ def create_app(
     @app.get("/api/status")
     async def api_status() -> dict[str, Any]:
         return await get_status()
+
+    @app.get("/api/events")
+    async def api_events(request: Request) -> StreamingResponse:
+        async def event_stream() -> Any:
+            while not await request.is_disconnected():
+                yield status_sse_event(await get_status())
+                await asyncio.sleep(1)
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.get("/api/stats")
     async def api_stats() -> dict[str, int]:

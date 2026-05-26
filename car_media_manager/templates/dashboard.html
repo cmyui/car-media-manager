@@ -61,7 +61,7 @@
 <body>
     <h1>Car Media Manager</h1>
 
-    <div class="cameras">
+    <div class="cameras" id="cameras">
         {% for cam in detected_cameras %}
         <div class="camera-badge" title="{{ cam.detail }}">
             <span class="dot online"></span>
@@ -80,57 +80,59 @@
         </div>
     </div>
 
-    {% for cam in detected_cameras %}
-    {% if cam.supports_pairing or cam.supports_remote_control %}
-    <div class="actions">
-        <strong style="margin-right: 8px;">{{ cam.display_name }}:</strong>
-        {% if cam.supports_pairing %}
-        <button class="btn" onclick="cameraAction('{{ cam.vendor }}', '{{ cam.camera_id }}', 'pair', 'Pair')">
-            {{ "Re-pair" if cam.is_paired else "Pair" }}
-        </button>
+    <div id="camera-actions">
+        {% for cam in detected_cameras %}
+        {% if cam.supports_pairing or cam.supports_remote_control %}
+        <div class="actions">
+            <strong style="margin-right: 8px;">{{ cam.display_name }}:</strong>
+            {% if cam.supports_pairing %}
+            <button class="btn" onclick="cameraAction('{{ cam.vendor }}', '{{ cam.camera_id }}', 'pair', 'Pair')">
+                {{ "Re-pair" if cam.is_paired else "Pair" }}
+            </button>
+            {% endif %}
+            {% if cam.supports_remote_control %}
+            <button class="btn" onclick="cameraAction('{{ cam.vendor }}', '{{ cam.camera_id }}', 'start_recording', 'Start')">Start Recording</button>
+            <button class="btn" onclick="cameraAction('{{ cam.vendor }}', '{{ cam.camera_id }}', 'stop_recording', 'Stop')">Stop Recording</button>
+            {% elif cam.supports_pairing and not cam.is_paired %}
+            <span class="status-msg">Pair camera to enable record control</span>
+            {% endif %}
+            <span class="status-msg" id="cam-status-{{ cam.vendor }}-{{ cam.camera_id }}"></span>
+        </div>
         {% endif %}
-        {% if cam.supports_remote_control %}
-        <button class="btn" onclick="cameraAction('{{ cam.vendor }}', '{{ cam.camera_id }}', 'start_recording', 'Start')">Start Recording</button>
-        <button class="btn" onclick="cameraAction('{{ cam.vendor }}', '{{ cam.camera_id }}', 'stop_recording', 'Stop')">Stop Recording</button>
-        {% elif cam.supports_pairing and not cam.is_paired %}
-        <span class="status-msg">Pair camera to enable record control</span>
-        {% endif %}
-        <span class="status-msg" id="cam-status-{{ cam.vendor }}-{{ cam.camera_id }}"></span>
+        {% endfor %}
     </div>
-    {% endif %}
-    {% endfor %}
 
     <div class="grid">
         <div class="card">
             <div class="label">Total Files</div>
-            <div class="value blue">{{ stats.total_files }}</div>
+            <div class="value blue" id="total-files">{{ stats.total_files }}</div>
         </div>
         <div class="card">
             <div class="label">Uploaded</div>
-            <div class="value green">{{ stats.uploaded_files }}</div>
-            <div class="subvalue">{{ total_uploaded_bytes }}</div>
+            <div class="value green" id="uploaded-files">{{ stats.uploaded_files }}</div>
+            <div class="subvalue" id="uploaded-bytes">{{ total_uploaded_bytes }}</div>
         </div>
         <div class="card">
             <div class="label">Pending Upload</div>
-            <div class="value yellow">{{ pending_size_display }}</div>
-            <div class="subvalue">{{ stats.pending_files }} files</div>
+            <div class="value yellow" id="pending-upload-bytes">{{ pending_size_display }}</div>
+            <div class="subvalue" id="pending-upload-files">{{ status.pending_upload.files }} files</div>
         </div>
         <div class="card">
             <div class="label">On Camera</div>
-            <div class="value yellow">{{ camera_remaining }}</div>
+            <div class="value yellow" id="camera-remaining">{{ camera_remaining }}</div>
         </div>
         <div class="card">
             <div class="label">Free Storage</div>
-            <div class="value blue">{{ storage_free_value }}</div>
-            <div class="subvalue">of {{ storage_total_value }}</div>
+            <div class="value blue" id="storage-free">{{ storage_free_value }}</div>
+            <div class="subvalue">of <span id="storage-total">{{ storage_total_value }}</span></div>
         </div>
         <div class="card">
             <div class="label">Speeds</div>
-            <div class="value blue" style="font-size: 1.2rem">&#x2B07; {{ ingest_speed }} &#x2B06; {{ upload_speed }}</div>
+            <div class="value blue" id="speeds-value" style="font-size: 1.2rem">&#x2B07; {{ ingest_speed }} &#x2B06; {{ upload_speed }}</div>
         </div>
         <div class="card">
             <div class="label">ETA</div>
-            <div class="value green">{{ global_eta }}</div>
+            <div class="value green" id="eta-value">{{ global_eta }}</div>
         </div>
     </div>
 
@@ -140,9 +142,9 @@
         <span class="status-msg" id="action-status"></span>
     </div>
 
-    {% if active_copies %}
+    <section id="copy-section" {% if not active_copies %}style="display: none;"{% endif %}>
     <h2>Copying from Camera</h2>
-    <div class="progress-list">
+    <div class="progress-list" id="copy-list">
         {% for cp in active_copies %}
         <div class="progress-row">
             <div class="progress-info">
@@ -159,11 +161,11 @@
         </div>
         {% endfor %}
     </div>
-    {% endif %}
+    </section>
 
-    {% if active_uploads %}
+    <section id="upload-section" {% if not active_uploads %}style="display: none;"{% endif %}>
     <h2>Uploading to Cloud</h2>
-    <div class="progress-list">
+    <div class="progress-list" id="upload-list">
         {% for up in active_uploads %}
         <div class="progress-row">
             <div class="progress-info">
@@ -181,7 +183,7 @@
         </div>
         {% endfor %}
     </div>
-    {% endif %}
+    </section>
 
     <h2>Ingested Files</h2>
     <table>
@@ -195,7 +197,7 @@
                 <th>Status</th>
             </tr>
         </thead>
-        <tbody>
+        <tbody id="files-body">
             {% for file in recent_files %}
             <tr>
                 <td>{{ file.vendor }}</td>
@@ -211,10 +213,182 @@
             {% endif %}
         </tbody>
     </table>
-    <p class="refresh-hint">Auto-refreshes every 10 seconds</p>
+    <p class="refresh-hint" id="connection-status">Connecting live updates...</p>
 
     <script>
-        setTimeout(() => location.reload(), 10000);
+        let fallbackPoll = null;
+
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#039;');
+        }
+
+        function setText(id, value) {
+            const el = document.getElementById(id);
+            if (el) el.textContent = value;
+        }
+
+        function setConnectionStatus(text) {
+            setText('connection-status', text);
+        }
+
+        function percent(value) {
+            const numeric = Number(value || 0);
+            return Math.max(0, Math.min(100, numeric));
+        }
+
+        function renderCameras(status) {
+            const root = document.getElementById('cameras');
+            const cameraHtml = status.cameras.length
+                ? status.cameras.map((cam) => `
+                    <div class="camera-badge" title="${escapeHtml(cam.detail)}">
+                        <span class="dot online"></span>
+                        ${escapeHtml(cam.display_name)}${cam.capabilities.length ? ' — ' + escapeHtml(cam.capabilities.join(' + ')) : ''}
+                    </div>
+                `).join('')
+                : `
+                    <div class="camera-badge">
+                        <span class="dot offline"></span>
+                        No cameras detected
+                    </div>
+                `;
+            root.innerHTML = cameraHtml + `
+                <div class="camera-badge">
+                    <span class="dot ${status.has_internet ? 'online' : 'offline'}"></span>
+                    Internet
+                </div>
+            `;
+        }
+
+        function renderCameraActions(status) {
+            const root = document.getElementById('camera-actions');
+            root.innerHTML = status.cameras
+                .filter((cam) => cam.supports_pairing || cam.supports_remote_control)
+                .map((cam) => {
+                    const vendorArg = encodeURIComponent(cam.vendor);
+                    const cameraArg = encodeURIComponent(cam.camera_id);
+                    const pairButton = cam.supports_pairing
+                        ? `<button class="btn" onclick="cameraAction(decodeURIComponent('${vendorArg}'), decodeURIComponent('${cameraArg}'), 'pair', 'Pair')">${cam.is_paired ? 'Re-pair' : 'Pair'}</button>`
+                        : '';
+                    const controls = cam.supports_remote_control
+                        ? `<button class="btn" onclick="cameraAction(decodeURIComponent('${vendorArg}'), decodeURIComponent('${cameraArg}'), 'start_recording', 'Start')">Start Recording</button>
+                           <button class="btn" onclick="cameraAction(decodeURIComponent('${vendorArg}'), decodeURIComponent('${cameraArg}'), 'stop_recording', 'Stop')">Stop Recording</button>`
+                        : (cam.supports_pairing && !cam.is_paired ? '<span class="status-msg">Pair camera to enable record control</span>' : '');
+                    return `
+                        <div class="actions">
+                            <strong style="margin-right: 8px;">${escapeHtml(cam.display_name)}:</strong>
+                            ${pairButton}
+                            ${controls}
+                            <span class="status-msg" id="cam-status-${escapeHtml(cam.vendor)}-${escapeHtml(cam.camera_id)}"></span>
+                        </div>
+                    `;
+                })
+                .join('');
+        }
+
+        function renderProgressRow(item, kind) {
+            const done = kind === 'copy' ? item.bytes_copied_display : item.bytes_uploaded_display;
+            const partStatus = item.part_status ? `<span class="eta">${escapeHtml(item.part_status)}</span>` : '';
+            return `
+                <div class="progress-row">
+                    <div class="progress-info">
+                        <span class="vendor-tag">${escapeHtml(item.vendor)}</span>
+                        <span class="filename">${escapeHtml(item.original_filename)}</span>
+                        <span class="bytes">${escapeHtml(done)} / ${escapeHtml(item.file_size_display)}</span>
+                        <span class="percent">${percent(item.percent).toFixed(1)}%</span>
+                        <span class="speed">${escapeHtml(item.speed_display)}</span>
+                        <span class="eta">ETA ${escapeHtml(item.eta_display)}</span>
+                        ${partStatus}
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${percent(item.percent)}%"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderProgress(sectionId, listId, items, kind) {
+            const section = document.getElementById(sectionId);
+            const list = document.getElementById(listId);
+            section.style.display = items.length ? '' : 'none';
+            list.innerHTML = items.map((item) => renderProgressRow(item, kind)).join('');
+        }
+
+        function renderFiles(files) {
+            const body = document.getElementById('files-body');
+            if (!files.length) {
+                body.innerHTML = '<tr><td colspan="6" style="color: #484f58; text-align: center; padding: 24px;">No files ingested yet</td></tr>';
+                return;
+            }
+            body.innerHTML = files.map((file) => `
+                <tr>
+                    <td>${escapeHtml(file.vendor)}</td>
+                    <td>${escapeHtml(file.original_filename)}</td>
+                    <td>${escapeHtml(file.file_size_display)}</td>
+                    <td>${escapeHtml(file.ingested_at_display)}</td>
+                    <td>${escapeHtml(file.uploaded_at_display)}</td>
+                    <td class="${escapeHtml(file.state)}">${escapeHtml(file.status_label)}</td>
+                </tr>
+            `).join('');
+        }
+
+        function applyStatus(status) {
+            renderCameras(status);
+            renderCameraActions(status);
+            setText('total-files', status.stats.total_files);
+            setText('uploaded-files', status.stats.uploaded_files);
+            setText('uploaded-bytes', status.display.total_uploaded_bytes);
+            setText('pending-upload-bytes', status.pending_upload.bytes_display);
+            setText('pending-upload-files', `${status.pending_upload.files} files`);
+            setText('camera-remaining', status.camera_remaining.bytes_display);
+            setText('storage-free', status.disk.free_display);
+            setText('storage-total', status.disk.total_display);
+            setText('speeds-value', `⬇ ${status.speeds.ingest_display} ⬆ ${status.speeds.upload_display}`);
+            setText('eta-value', status.etas.overall_display);
+            renderProgress('copy-section', 'copy-list', status.active_copies, 'copy');
+            renderProgress('upload-section', 'upload-list', status.active_uploads, 'upload');
+            renderFiles(status.recent_files);
+        }
+
+        async function fetchStatus() {
+            const res = await fetch('/api/status');
+            if (!res.ok) throw new Error(`status ${res.status}`);
+            applyStatus(await res.json());
+        }
+
+        function startFallbackPolling() {
+            if (fallbackPoll) return;
+            setConnectionStatus('Live updates reconnecting; polling every second');
+            fallbackPoll = setInterval(() => {
+                fetchStatus().catch((e) => setConnectionStatus('Live updates unavailable: ' + e.message));
+            }, 1000);
+        }
+
+        function stopFallbackPolling() {
+            if (!fallbackPoll) return;
+            clearInterval(fallbackPoll);
+            fallbackPoll = null;
+        }
+
+        function connectEvents() {
+            if (!window.EventSource) {
+                startFallbackPolling();
+                return;
+            }
+            const source = new EventSource('/api/events');
+            source.addEventListener('status', (event) => {
+                stopFallbackPolling();
+                setConnectionStatus('Live updates connected');
+                applyStatus(JSON.parse(event.data));
+            });
+            source.onerror = () => {
+                startFallbackPolling();
+            };
+        }
 
         async function triggerIngest() {
             const btn = document.getElementById('ingest-btn');
@@ -225,9 +399,7 @@
                 const res = await fetch('/api/ingest', { method: 'POST' });
                 const data = await res.json();
                 status.textContent = data.message || data.status;
-                if (res.status === 202) {
-                    setTimeout(() => location.reload(), 3000);
-                }
+                await fetchStatus();
             } catch (e) {
                 status.textContent = 'Error: ' + e.message;
             }
@@ -243,9 +415,7 @@
                 const res = await fetch('/api/upload', { method: 'POST' });
                 const data = await res.json();
                 status.textContent = data.message || data.status;
-                if (res.status === 202) {
-                    setTimeout(() => location.reload(), 3000);
-                }
+                await fetchStatus();
             } catch (e) {
                 status.textContent = 'Error: ' + e.message;
             }
@@ -271,6 +441,9 @@
                 status.textContent = 'Error: ' + e.message;
             }
         }
+
+        connectEvents();
+        fetchStatus().catch(() => startFallbackPolling());
     </script>
 </body>
 </html>
